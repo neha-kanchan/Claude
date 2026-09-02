@@ -8,6 +8,8 @@ A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (o
 
 All dependencies are **already bundled** in this package, and the database engine (SQLite) is **built into Node.js itself** — so there is no `npm install` step and no admin rights needed. Requires **Node.js 24+** (the portable ZIP version works fine).
 
+**No admin rights on your machine?** You do not need to install anything. Download the **Windows Binary (.zip)** from [nodejs.org](https://nodejs.org) (64-bit), extract it into your Downloads or Desktop folder, and double-click `start-windows.cmd` — the launcher finds a `node-v...-win-x64` folder in those locations by itself. On Mac/Linux the equivalent is the `.tar.xz` build: extract it, then run `/path/to/node-v24.x-darwin-arm64/bin/node server.js`.
+
 **Windows:** double-click `start-windows.cmd`, or in a terminal:
 
 ```powershell
