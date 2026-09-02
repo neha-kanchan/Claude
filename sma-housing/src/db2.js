@@ -53,7 +53,28 @@ export async function initDb() {
   }
   const sql = await readFile(SCHEMA_PATH, 'utf8');
   if (driver.kind === 'sqlite') driver.raw.exec(sql); else await driver.query(sql);
+  await addMissingColumns();
   return driver;
+}
+
+// "create table if not exists" leaves databases created by an earlier version untouched,
+// so columns added after the first release are applied here.
+const ADDED_COLUMNS = [['students', 'photo_key', 'text']];
+
+async function addMissingColumns() {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    if (await hasColumn(table, column)) continue;
+    await driver.query(`alter table "${table}" add column "${column}" ${type}`);
+  }
+}
+
+async function hasColumn(table, column) {
+  if (driver.kind === 'sqlite') {
+    return driver.raw.prepare(`pragma table_info("${table}")`).all().some((c) => c.name === column);
+  }
+  const { rows } = await driver.query(
+    'select 1 from information_schema.columns where table_name = $1 and column_name = $2', [table, column]);
+  return rows.length > 0;
 }
 
 export function query(sql, params) { return driver.query(sql, params); }
@@ -63,7 +84,7 @@ const q = (c) => `"${snake(c)}"`;
 
 // Collections. cols use the SPA's field names; ints are 0/1 or numeric; json columns hold arrays/objects.
 export const COLLECTIONS = {
-  students:      { cols: ['id','name','email','phone','college','building','room','status','joined','emergency'] },
+  students:      { cols: ['id','name','email','phone','college','building','room','status','joined','emergency','photoKey'] },
   buildings:     { cols: ['id','name','floors'], ints: ['floors'] },
   rooms:         { cols: ['id','buildingId','floor','number','capacity','active'], ints: ['floor','capacity','active'] },
   allocations:   { cols: ['id','studentId','roomId','from','to','note'] },

@@ -356,6 +356,14 @@ const student=id=>DB.students.find(s=>s.id===id)||{name:'(removed)',id};
 const room=id=>DB.rooms.find(r=>r.id===id);
 const bldg=id=>DB.buildings.find(b=>b.id===id)||{name:id};
 function studentLink(id){ const s=student(id); return `<a class="rowlink" onclick="go('studentDetail','${id}')">${esc(s.name)}</a><br><span class="mono" style="color:var(--ink-soft)">${id}</span>`; }
+const initials=n=>String(n||'').trim().split(/\s+/).map(x=>x[0]||'').slice(0,2).join('').toUpperCase();
+/* Student photo: stored like any other upload in DB.files, referenced by student.photoKey. */
+function studentPhotoUrl(s){ const f=s&&s.photoKey?(DB.files||{})[s.photoKey]:null; return f&&f.data?f.data:null; }
+function studentAvatar(s,cls){
+  const url=studentPhotoUrl(s);
+  return url?`<span class="avatar ${cls||''} has-photo"><img src="${url}" alt="${esc(s.name||'Student')} photo"></span>`
+            :`<span class="avatar ${cls||''}">${esc(initials(s.name)||'?')}</span>`;
+}
 function studentOptions(sel){ return DB.students.filter(s=>s.status==='Active').map(s=>`<option value="${s.id}" ${s.id===sel?'selected':''}>${esc(s.name)} (${s.id})</option>`).join(''); }
 
 /* overdue = exit with expected return in the past and no return logged */
@@ -467,7 +475,7 @@ function renderStudents(){
     (!q||s.name.toLowerCase().includes(q)||s.id.toLowerCase().includes(q)||s.email.toLowerCase().includes(q))
     &&(!col||s.college===col)&&(!b||s.building===b)&&(!st||s.status===st));
   $('#stTable').innerHTML=rows.length?`<table><thead><tr><th>Student</th><th>Email</th><th>College / Major</th><th>Building</th><th>Room</th><th>Status</th><th></th></tr></thead><tbody>
-  ${rows.map(s=>`<tr><td>${studentLink(s.id)}</td><td style="font-size:.82rem">${esc(s.email)}</td><td>${esc(s.college)}</td>
+  ${rows.map(s=>`<tr><td><div class="cell-user">${studentAvatar(s,'sm')}<div>${studentLink(s.id)}</div></div></td><td style="font-size:.82rem">${esc(s.email)}</td><td>${esc(s.college)}</td>
     <td>${esc(bldg(s.building).name)}</td><td class="mono">${esc(s.room||'—')}</td><td>${tag(s.status)}</td>
     <td style="white-space:nowrap">${abtn('students','edit',`<button class="btn small" onclick="studentForm('${s.id}')">Edit</button>`)}
     ${abtn('students','allocate',`<button class="btn small" onclick="allocateForm('${s.id}')">Room</button>`)}</td></tr>`).join('')}
@@ -475,11 +483,22 @@ function renderStudents(){
 }
 function exportStudents(){
   exportCSV('students.csv',DB.students.map(s=>({id:s.id,name:s.name,email:s.email,college:s.college,
-    building:bldg(s.building).name,room:s.room,status:s.status,last_activity:latestActivity(s.id)})));
+    building:bldg(s.building).name,room:s.room,status:s.status,photo:s.photoKey?'on file':'none',
+    last_activity:latestActivity(s.id)})));
 }
 function studentForm(id){
   const s=id?student(id):{};
+  const url=FORM_PHOTO_URL=studentPhotoUrl(s);
   openModal(id?'Edit student':'Add student',`
+    <div class="photo-field">
+      <div class="photo-preview" id="sf_preview">${url?`<img src="${url}" alt="Current photo">`:`<span>${esc(initials(s.name)||'?')}</span>`}</div>
+      <div class="photo-field-body">
+        <label>Student photo</label>
+        <input type="file" id="sf_photo" accept="image/*" onchange="previewStudentPhoto(this)">
+        <p class="hint">JPEG or PNG up to ${PHOTO_MAX_UPLOAD/1048576} MB. The photo is resized to ${PHOTO_MAX_DIM}px before it is stored with the record.</p>
+        ${url?`<label class="inline-check"><input type="checkbox" id="sf_photo_rm" onchange="previewStudentPhoto($('#sf_photo'))"> Remove the current photo</label>`:''}
+      </div>
+    </div>
     <div class="frow"><div><label>Full name</label><input id="sf_name" value="${esc(s.name||'')}"></div>
     <div><label>Student ID</label><input id="sf_id" value="${esc(s.id||'STU-'+(1000+DB.students.length+1))}" ${id?'disabled':''}></div></div>
     <div class="frow"><div><label>Email</label><input id="sf_email" value="${esc(s.email||'')}"></div>
@@ -489,18 +508,24 @@ function studentForm(id){
     <div><label>Emergency contact</label><input id="sf_em" value="${esc(s.emergency||'')}"></div>`,
     `<button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveStudent('${id||''}')">Save student</button>`);
 }
-function saveStudent(id){
+async function saveStudent(id){
   const data={name:$('#sf_name').value.trim(),email:$('#sf_email').value.trim(),phone:$('#sf_phone').value.trim(),
     college:$('#sf_col').value,status:$('#sf_status').value,emergency:$('#sf_em').value.trim()};
   if(!data.name) return toast('Name is required');
+  const removePhoto=$('#sf_photo_rm')?$('#sf_photo_rm').checked:false;
+  let photo=null;
+  try{ photo=removePhoto?null:await readImageInput($('#sf_photo')); }
+  catch(e){ return toast(e.message); }
+  const photoNote=photo?' · photo updated':(removePhoto?' · photo removed':'');
   if(id){ const s=student(id); const wasActive=s.status; Object.assign(s,data);
     if(wasActive!=='Inactive'&&data.status==='Inactive'&&s.room){ endAllocation(id,'Deactivated'); s.room=null; s.building=null; }
-    audit('UPDATE','student',id,'Profile updated');
+    if(photo||removePhoto) setStudentPhoto(s,photo?storeFile(photo):null);
+    audit('UPDATE','student',id,'Profile updated'+photoNote);
   } else {
     const nid=$('#sf_id').value.trim()||uid('STU');
     if(DB.students.some(x=>x.id===nid)) return toast('Student ID already exists');
-    DB.students.push({id:nid,...data,building:null,room:null,joined:todayStr()});
-    audit('CREATE','student',nid,'Student added');
+    DB.students.push({id:nid,...data,building:null,room:null,joined:todayStr(),photoKey:photo?storeFile(photo):null});
+    audit('CREATE','student',nid,'Student added'+photoNote);
   }
   save('students'); closeModal(); toast('Student saved');
   CURRENT_PAGE==='studentDetail'?go('studentDetail',id):go('students');
@@ -556,7 +581,7 @@ ROUTES.studentDetail=function(){
     ${abtn('students','deactivate',`<button class="btn ${s.status==='Active'?'danger':'primary'}" onclick="toggleActive('${sid}')">${s.status==='Active'?'Deactivate':'Reactivate'}</button>`)}</div></div>
 
   <div class="card" style="margin-bottom:1rem"><div class="detail-hero">
-    <div class="avatar">${esc(s.name.split(' ').map(x=>x[0]).slice(0,2).join(''))}</div>
+    ${studentAvatar(s)}
     <div style="flex:1;min-width:220px"><h2 style="font-size:1.2rem">${esc(s.name)} ${tag(s.status)}</h2>
       <div style="color:var(--ink-soft);font-size:.87rem" class="mono">${sid}</div></div>
     <div class="meta-grid" style="flex:2;min-width:280px">
@@ -774,6 +799,69 @@ function downloadFileKey(key,fallbackName){
   const a=document.createElement('a'); a.href=f.data; a.download=f.name||fallbackName||'document'; a.click();
 }
 function fmtSize(b){ if(!b) return '—'; return b>1048576?(b/1048576).toFixed(1)+' MB':Math.round(b/1024)+' KB'; }
+
+/* ---------------- Photo helper (student photos) ----------------
+   Photos go through the same file store as documents, but are downscaled in the
+   browser first so a phone snapshot does not travel to the database at full size. */
+const PHOTO_MAX_DIM=480;                 // longest edge, pixels
+const PHOTO_MAX_UPLOAD=8*1024*1024;      // rejected before any resizing work
+const PHOTO_QUALITY=0.85;
+
+function readImageInput(inputEl,maxDim){
+  const max=maxDim||PHOTO_MAX_DIM;
+  return new Promise((resolve,reject)=>{
+    const f=inputEl&&inputEl.files&&inputEl.files[0];
+    if(!f) return resolve(null);
+    if(!/^image\//.test(f.type)) return reject(new Error('That file is not an image — choose a JPEG or PNG'));
+    if(f.size>PHOTO_MAX_UPLOAD) return reject(new Error('Image is larger than '+(PHOTO_MAX_UPLOAD/1048576)+' MB'));
+    const r=new FileReader();
+    r.onerror=()=>reject(new Error('Could not read that file'));
+    r.onload=()=>{
+      const img=new Image();
+      img.onerror=()=>reject(new Error('That image could not be decoded'));
+      img.onload=()=>{
+        const scale=Math.min(1,max/Math.max(img.width,img.height));
+        const w=Math.max(1,Math.round(img.width*scale)), h=Math.max(1,Math.round(img.height*scale));
+        const c=document.createElement('canvas'); c.width=w; c.height=h;
+        const ctx=c.getContext('2d');
+        ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h);   // flatten transparency for JPEG
+        ctx.drawImage(img,0,0,w,h);
+        const data=c.toDataURL('image/jpeg',PHOTO_QUALITY);
+        const base64=data.slice(data.indexOf(',')+1);
+        resolve({name:f.name.replace(/\.[^.]+$/,'')+'.jpg',mime:'image/jpeg',
+          size:Math.round(base64.length*3/4),data});
+      };
+      img.src=r.result;
+    };
+    r.readAsDataURL(f);
+  });
+}
+
+/* Point a student at a new photo (or none) and drop the file it replaces. */
+function setStudentPhoto(s,key){
+  if(s.photoKey&&s.photoKey!==key&&DB.files[s.photoKey]) delete DB.files[s.photoKey];
+  s.photoKey=key||null;
+  save('files');
+}
+
+/* Live preview inside the student form — no upload happens until Save. */
+let FORM_PHOTO_URL=null;   // photo already on the record being edited
+function previewStudentPhoto(inputEl){
+  const box=$('#sf_preview'); if(!box) return;
+  const remove=$('#sf_photo_rm')?$('#sf_photo_rm').checked:false;
+  const f=!remove&&inputEl&&inputEl.files&&inputEl.files[0];
+  if(box._url){ URL.revokeObjectURL(box._url); box._url=null; }
+  if(!f){
+    const fallback=remove?null:FORM_PHOTO_URL;
+    const name=$('#sf_name')?$('#sf_name').value:'';
+    box.innerHTML=fallback?`<img src="${fallback}" alt="Current photo">`:`<span>${esc(initials(name)||'?')}</span>`;
+    return;
+  }
+  if(!/^image\//.test(f.type)) return toast('That file is not an image — choose a JPEG or PNG');
+  if(f.size>PHOTO_MAX_UPLOAD) return toast('Image is larger than '+(PHOTO_MAX_UPLOAD/1048576)+' MB');
+  box._url=URL.createObjectURL(f);
+  box.innerHTML=`<img src="${box._url}" alt="Selected photo">`;
+}
 
 /* ---------------- Violations ---------------- */
 const VIO_FLOW=['Open','Investigation','Decision','Closed'];

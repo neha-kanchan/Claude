@@ -6,7 +6,7 @@ create table if not exists "students" (
   "env" text not null, "id" text not null,
   "name" text not null, "email" text, "phone" text, "college" text,
   "building" text, "room" text, "status" text default 'Active',
-  "joined" text, "emergency" text,
+  "joined" text, "emergency" text, "photo_key" text,
   primary key ("env","id")
 );
 

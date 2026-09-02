@@ -1,6 +1,6 @@
 # SMA Housing System — Student Housing Management
 
-A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (or zero-config SQLite) + single-page frontend. Covers the complete requirements set: dashboard KPIs, student 360° profiles, daily roll call, entry/exit with overdue alerts, violations, complaints (incl. maintenance sub-types), requests, documents with stored file bodies, calendar, notifications, master data with date ranges, role-based page **and** button permissions enforced server-side, full audit trail, JSON backups, and separate Production / Non-Production environments with one-click cloning.
+A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (or zero-config SQLite) + single-page frontend. Covers the complete requirements set: dashboard KPIs, student 360° profiles, daily roll call, entry/exit with overdue alerts, violations, complaints (incl. maintenance sub-types), requests, documents with stored file bodies, student photos, calendar, notifications, master data with date ranges, role-based page **and** button permissions enforced server-side, full audit trail, JSON backups, and separate Production / Non-Production environments with one-click cloning.
 
 ---
 
@@ -97,6 +97,22 @@ POST /api/admin/reset-demo                 wipe current environment & reseed ide
 POST /api/users/<id>/password              admin sets a user's username/password
 GET  /api/health                           liveness + db/auth mode
 ```
+
+### Student photos
+
+A student record carries an optional photo. **Add student** and **Edit profile** have a photo field with a live preview; the picture is downscaled in the browser (longest edge 480px, JPEG) before it is stored, so a phone snapshot arrives as ~40–80 KB instead of several megabytes. Images larger than 8 MB and non-image files are rejected at the form.
+
+The photo body is kept in the same `files` store as document uploads, and the student row references it by key:
+
+```
+GET  /api/students/SMA2026001     → { ..., "photoKey": "FILE-3KD9Q" }
+GET  /api/files/FILE-3KD9Q/download   the photo body
+POST /api/students                create/update with "photoKey": "<key>"  (null clears it)
+```
+
+Photos appear as a thumbnail in the student list and on the student's 360° record; students without one keep the initials avatar. Replacing or removing a photo deletes the file it replaced, so the store does not accumulate orphans. Every photo change is audited with the profile update.
+
+`students.photo_key` is added to existing databases automatically on start-up, so an installation created before this feature keeps its data and gains the column.
 
 Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route (a read-only role gets `403` even if it crafts raw requests).
 
