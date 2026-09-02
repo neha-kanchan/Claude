@@ -1,4 +1,6 @@
 .env
 node_modules/
-backend/db/*.sqlite*
+dist/
+backend/prisma/*.db
+backend/prisma/*.db-journal
 frontend/dist/

@@ -8,7 +8,7 @@
       "problemMatcher": []
     },
     {
-      "label": "Backend API (port 3000)",
+      "label": "NestJS API (port 3000)",
       "type": "shell",
       "command": "npm run dev:api",
       "isBackground": true,
@@ -23,15 +23,28 @@
     },
     {
       "label": "Start developing",
-      "dependsOn": ["Backend API (port 3000)", "Frontend dev server (port 5173)"],
+      "dependsOn": [
+        "NestJS API (port 3000)",
+        "Frontend dev server (port 5173)"
+      ],
       "dependsOrder": "parallel",
       "problemMatcher": [],
-      "group": { "kind": "build", "isDefault": true }
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
     },
     {
-      "label": "Build frontend for production",
+      "label": "Build for production",
       "type": "shell",
       "command": "npm run build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Prisma Studio (browse the database)",
+      "type": "shell",
+      "command": "npm run prisma:studio --prefix backend",
+      "isBackground": true,
       "problemMatcher": []
     }
   ]

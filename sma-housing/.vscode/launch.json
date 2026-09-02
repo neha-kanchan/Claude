@@ -2,13 +2,19 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug backend API",
+      "name": "Debug NestJS API",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/backend/server.js",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "${workspaceFolder}/backend",
       "console": "integratedTerminal",
-      "skipFiles": ["<node_internals>/**"]
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
     }
   ]
 }

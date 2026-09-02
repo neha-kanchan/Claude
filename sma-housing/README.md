@@ -3,7 +3,7 @@
 A full-stack web application in two halves:
 
 - **`frontend/`** — React 18 single-page app, built with Vite. Sixteen screens covering dashboard KPIs, student 360° profiles with photos, daily roll call, entry/exit with overdue alerts, violations, complaints and maintenance, requests, documents, calendar, notifications, reports, master data, roles and users, and the audit trail.
-- **`backend/`** — Express REST API over **PostgreSQL** (with SQLite as a zero-config fallback for local runs), Microsoft Entra ID SSO or local JWT auth, role-based permissions enforced server-side, full audit trail and JSON backups.
+- **`backend/`** — NestJS (TypeScript) REST API over **Prisma**, running on **SQLite** out of the box and **PostgreSQL** with a one-command switch. Microsoft Entra ID SSO or local JWT auth, decorator-based role permissions enforced server-side, full audit trail, JSON backups and auto-generated OpenAPI docs at `/api/docs`.
 
 The frontend never touches the database. It talks to the same REST API any other system would use.
 
@@ -12,10 +12,12 @@ The frontend never touches the database. It talks to the same REST API any other
 You need **Node.js 22.5+** (24+ recommended). No admin rights? Download the **Windows Binary (.zip)** from [nodejs.org](https://nodejs.org), extract it into your Downloads or Desktop folder, and `start-windows.cmd` will find it — the portable build needs no installer.
 
 ```bash
-npm run setup     # installs backend and frontend dependencies (once)
-npm run build     # builds the React app into frontend/dist
-npm start         # serves API + built frontend on http://localhost:3000
+npm run setup     # installs both halves, creates backend/.env, applies migrations (once)
+npm run build     # compiles the API and builds the React app
+npm start         # serves API + frontend on http://localhost:3000
 ```
+
+`npm run setup` generates a real `SESSION_SECRET` for you and creates the SQLite database at `backend/prisma/dev.db` — nothing to install, no database server to run.
 
 On Windows you can double-click `start-windows.cmd` instead of `npm start`, once you have run setup and build.
 
@@ -33,38 +35,46 @@ On first sign-in the app creates a demo dataset (students, rooms, cases…) and 
 ## 2. Developing (two servers)
 
 ```bash
-npm run dev:api   # terminal 1 — Express on :3000, restarts on save
+npm run dev:api   # terminal 1 — NestJS on :3000, restarts on save
 npm run dev:web   # terminal 2 — Vite on :5173, hot reload, proxies /api to :3000
 ```
 
-Open **http://localhost:5173** while developing: edits to React files appear instantly without a rebuild. In VS Code, **Terminal → Run Task → Start developing** launches both at once; `.vscode/launch.json` also has a *Debug backend API* configuration for breakpoints in the server.
+Open **http://localhost:5173** while developing: edits to React files appear instantly without a rebuild. In VS Code, **Terminal → Run Task → Start developing** launches both at once; `.vscode/launch.json` also has a *Debug NestJS API* configuration for breakpoints in the server.
 
 ## 3. The database
 
-With no `DATABASE_URL` set, the app uses SQLite in `backend/db/housing.sqlite` — fine for evaluation and for local development, and it needs nothing installed.
+`backend/prisma/schema.prisma` is the source of truth for every table. SQLite is the default, so a fresh checkout runs with nothing installed.
 
-For anything real, set `DATABASE_URL` and the app switches to PostgreSQL on start-up; tables are created automatically:
+**Moving to PostgreSQL** — the same schema, the same code:
 
 ```bash
-DATABASE_URL=postgres://user:password@host:5432/sma_housing npm start
+cd backend
+npm run db:postgres                              # flips the Prisma datasource
+# set DATABASE_URL=postgresql://user:pass@host:5432/sma_housing in backend/.env
+rm -rf prisma/migrations && npx prisma migrate dev --name init
+cd .. && npm run build && npm start              # /api/health now reports "postgres"
 ```
 
-Everything else — schema, migrations, the API — is identical on both engines.
+Migration history is per-engine, so the switch starts a fresh database. Data does not travel with it — take a JSON backup from **Integration & API → Download backup** first if you need to carry records across. `npm run db:sqlite` switches back.
+
+Changing the schema is a migration, not a hand-edited table: edit `schema.prisma`, run `npx prisma migrate dev --name what-you-changed`, and the migration is versioned in git. `npm run prisma:studio --prefix backend` opens a browser table editor over whichever database is live.
 
 ## 4. Configuration (`backend/.env`)
 
-Copy `backend/.env.example` to `backend/.env`:
+`npm run setup` creates this from `backend/.env.example`:
 
 | Variable | Purpose | Default |
 |---|---|---|
 | `PORT` | HTTP port | 3000 |
-| `DATABASE_URL` | PostgreSQL connection string; empty = SQLite file | empty |
+| `DATABASE_URL` | `file:./dev.db` for SQLite, or a PostgreSQL connection string | `file:./dev.db` |
 | `AUTH_MODE` | `local` (username/password) or `entra` (Microsoft SSO) | local |
-| `SESSION_SECRET` | HMAC secret for login tokens — **must be changed in production** | dev value |
+| `SESSION_SECRET` | HMAC secret for login tokens | generated by `npm run setup` |
 | `SESSION_HOURS` | Session lifetime | 12 |
 | `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_API_AUDIENCE` | Entra ID app registration, used when `AUTH_MODE=entra` | empty |
 
 ## 5. REST API
+
+Interactive docs — every endpoint, with a try-it button — are generated from the code at **http://localhost:3000/api/docs**.
 
 All endpoints are under `/api`, JSON in/out, authenticated with `Authorization: Bearer <token>` from `POST /api/auth/login` (or an Entra token in SSO mode).
 
@@ -87,9 +97,10 @@ GET  /api/admin/backup                     full JSON dump of the database
 POST /api/admin/reset-demo                 wipe the database & reseed identities
 POST /api/users/<id>/password              admin sets a user's username/password
 GET  /api/health                           liveness + db/auth mode
+GET  /api/docs                             Swagger UI (OpenAPI JSON at /api/docs-json)
 ```
 
-Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route (a read-only role gets `403` even if it crafts raw requests).
+Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route: `@RequirePermission('students', 'edit')` and `@AdminOnly()` gate the fixed routes, and the collection routes check the caller's role against the collection they name. A read-only role gets `403` even if it crafts raw requests.
 
 ### Student photos
 
@@ -111,13 +122,13 @@ Build the frontend, then run the backend — one process serves both.
 
 ```bash
 npm run setup && npm run build
-SESSION_SECRET=$(openssl rand -hex 32) DATABASE_URL=postgres://... PORT=8080 npm start
+SESSION_SECRET=$(openssl rand -hex 32) DATABASE_URL=postgresql://... PORT=8080 npm start
 ```
 
-On a platform-as-a-service (Render, Railway, Azure App Service), set the build command to `npm run setup && npm run build`, the start command to `npm start`, and provide `DATABASE_URL` and `SESSION_SECRET` as environment variables.
+On a platform-as-a-service (Render, Railway, Azure App Service), set the build command to `npm run setup && npm run build`, the start command to `npm start`, and provide `DATABASE_URL` and `SESSION_SECRET` as environment variables. Run `npx prisma migrate deploy` on release so the database matches the code.
 
 Notes:
-- **Use PostgreSQL in production.** Most hosts wipe the container disk on restart, which would take the SQLite file with it.
+- **Switch to PostgreSQL before hosting.** Most hosts wipe the container disk on restart, which would take the SQLite file with it. Section 3 is the whole procedure.
 - Put TLS in front (the host's ingress, or nginx). The app is a single stateless process, so scaling out is safe once you are on Postgres.
 - Backups: your database's own backups **plus** the in-app JSON export for portable snapshots.
 - `backend/db/`, `.env` and `frontend/dist/` are git-ignored.
@@ -126,15 +137,20 @@ Notes:
 
 ```
 package.json          root scripts: setup / build / start / dev:api / dev:web
-.vscode/              VS Code tasks (run both servers) and a debug configuration
+.vscode/              VS Code tasks (run both servers, Prisma Studio) and a debug config
 backend/
-  server.js           Express app: security headers, /api router, serves frontend/dist
-  src/routes.js       API routes (auth, bootstrap, sync, REST, files, admin)
-  src/auth.js         Local JWT sessions + Entra ID token verification
-  src/perms.js        Server-side role/permission checks (page + action level)
-  src/db2.js          Database adapter — same code drives PostgreSQL and SQLite
-  src/seed2.js        Roles/users identity seed + default permission sets
-  db/schema.sql       Normalized schema, one table per entity
+  prisma/schema.prisma   every table, and the SQLite/PostgreSQL switch
+  prisma/migrations/     versioned schema history
+  src/main.ts            bootstrap: helmet, CORS, /api prefix, Swagger
+  src/app.module.ts      module wiring; seeds identities on start-up
+  src/auth/              JWT + Entra sessions, AuthGuard, @RequirePermission, @AdminOnly
+  src/data/              one service and controller driving all 18 collections
+  src/files/             file download (swap point for object storage)
+  src/admin/             backup, reset, credential management
+  src/audit/             the audit trail
+  src/common/            collection metadata + permission rules
+  src/static/            serves frontend/dist in production
+  scripts/               .env bootstrap and the database engine switch
 frontend/
   index.html          Vite entry point
   vite.config.js      Dev server + /api proxy to the backend
@@ -147,10 +163,9 @@ frontend/
 
 ## 8. Verified
 
-Run against **real PostgreSQL 16** with the production build served by Express:
+Run against the NestJS API on **both** engines, with the production build served by Nest:
 
-- Sign-in, first-run seeding, all 15 navigation pages render, and no console errors.
-- Student photo upload → thumbnail in the list → photo on the 360° record → survives a reload (read back from Postgres, stored as a 480px JPEG).
-- Role permissions: a Viewer sees student photos but no Add/Edit buttons and no Roles page.
-- Vite dev server on :5173 proxying `/api` to the backend on :3000.
-- Databases created by earlier versions gain the `photo_key` column on start-up, with existing rows intact (checked on both PostgreSQL and SQLite).
+- **SQLite and PostgreSQL 16**, same code, provider switched: sign-in, first-run seeding, all 15 navigation pages, photo upload surviving a reload, and no console errors on either.
+- **API contract**: bootstrap shapes (arrays, the `files` dictionary, `settings` as one object, parsed JSON columns), batch-sync diffing (create / update / delete, and a no-op sync reporting no changes), REST filters, and file download returning the original bytes.
+- **Permissions**: a Viewer gets `403` on writes and on `/admin/backup` but `200` reading students; a Security Officer can sync attendance but not roles; password hashes never leave the server.
+- **Clean-room install**: unpacked to an empty directory, then `npm run setup && npm run build && npm start` — app, API and Swagger all served, database created and migrated from scratch.

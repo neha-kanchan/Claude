@@ -33,10 +33,17 @@ if not defined NODE_EXE (
 )
 
 if not exist "%~dp0frontend\dist\index.html" (
-  echo The frontend has not been built yet.
+  echo The app has not been built yet.
   echo Run these once, from this folder:
   echo     npm run setup
   echo     npm run build
+  echo.
+  pause
+  exit /b 1
+)
+
+if not exist "%~dp0backend\dist\main.js" (
+  echo The API has not been built yet - run "npm run build" from this folder.
   echo.
   pause
   exit /b 1
@@ -47,5 +54,5 @@ echo Starting SMA Housing System... keep this window open.
 echo Then open http://localhost:3000 in your browser.
 echo.
 cd backend
-"%NODE_EXE%" server.js
+"%NODE_EXE%" dist\main.js
 pause

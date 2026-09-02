@@ -1,0 +1,251 @@
+// SMA Housing System - data model.
+//
+// SQLite by default so the app runs with nothing installed. To move to
+// PostgreSQL change the provider below to "postgresql", point DATABASE_URL at
+// the server and run `npm run prisma:migrate` - every type used here behaves
+// the same on both engines. Fields that hold structured data (attachments,
+// case history, permissions) are stored as JSON strings rather than a Json
+// column, because SQLite has no native JSON type.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id        String   @id
+  name      String
+  email     String?
+  phone     String?
+  college   String?
+  building  String?
+  room      String?
+  status    String   @default("Active")
+  joined    String?
+  emergency String?
+  photoKey  String?  @map("photo_key")
+
+  @@index([status])
+  @@map("students")
+}
+
+model Building {
+  id     String @id
+  name   String
+  floors Int    @default(1)
+
+  @@map("buildings")
+}
+
+model Room {
+  id         String  @id
+  buildingId String? @map("building_id")
+  floor      Int?
+  number     String?
+  capacity   Int     @default(2)
+  active     Boolean @default(true)
+
+  @@index([buildingId])
+  @@map("rooms")
+}
+
+model Allocation {
+  id        String  @id
+  studentId String  @map("student_id")
+  roomId    String  @map("room_id")
+  from      String?
+  to        String?
+  note      String?
+
+  @@index([studentId])
+  @@map("allocations")
+}
+
+model Attendance {
+  id        String  @id
+  date      String
+  studentId String  @map("student_id")
+  status    String  @default("Unknown")
+  note      String?
+  by        String?
+  at        String?
+
+  @@index([date])
+  @@index([studentId])
+  @@map("attendance")
+}
+
+model Movement {
+  id             String   @id
+  studentId      String   @map("student_id")
+  type           String
+  at             String
+  expectedReturn String?  @map("expected_return")
+  returnedAt     String?  @map("returned_at")
+  purpose        String?
+  by             String?
+  late           Boolean  @default(false)
+
+  @@index([studentId])
+  @@map("movements")
+}
+
+model Violation {
+  id          String  @id
+  studentId   String  @map("student_id")
+  type        String
+  date        String?
+  time        String?
+  location    String?
+  description String?
+  staff       String?
+  action      String?
+  status      String  @default("Open")
+  attachments String? // JSON array
+  history     String? // JSON array
+
+  @@index([studentId])
+  @@map("violations")
+}
+
+model Complaint {
+  id          String  @id
+  studentId   String  @map("student_id")
+  category    String
+  sub         String?
+  title       String?
+  description String?
+  status      String  @default("Submitted")
+  assignee    String?
+  priority    String?
+  createdAt   String? @map("created_at")
+  respondedAt String? @map("responded_at")
+  resolvedAt  String? @map("resolved_at")
+  attachments String? // JSON array
+  comments    String? // JSON array
+
+  @@index([studentId])
+  @@map("complaints")
+}
+
+model Request {
+  id        String  @id
+  studentId String  @map("student_id")
+  type      String
+  details   String?
+  status    String  @default("Submitted")
+  createdAt String? @map("created_at")
+  decidedAt String? @map("decided_at")
+  history   String? // JSON array
+
+  @@index([studentId])
+  @@map("requests")
+}
+
+model Document {
+  id         String  @id
+  studentId  String? @map("student_id")
+  type       String?
+  name       String
+  uploadedAt String? @map("uploaded_at")
+  by         String?
+  size       String?
+  fileKey    String? @map("file_key")
+
+  @@index([studentId])
+  @@map("documents")
+}
+
+/// Stored file bodies (student photos, agreements, evidence) as data URLs.
+/// Swapping this for object storage means changing only FilesService.
+model StoredFile {
+  id   String  @id
+  name String?
+  mime String?
+  size Int?
+  data String
+
+  @@map("files")
+}
+
+model CalendarEvent {
+  id    String  @id
+  date  String
+  title String
+  type  String?
+
+  @@index([date])
+  @@map("calendar")
+}
+
+model Notification {
+  id    String  @id
+  at    String
+  type  String?
+  title String?
+  body  String?
+  link  String?
+  read  Boolean @default(false)
+
+  @@map("notifications")
+}
+
+model AuditEntry {
+  id       String  @id
+  at       String
+  user     String?
+  role     String?
+  action   String
+  entity   String?
+  entityId String? @map("entity_id")
+  details  String?
+
+  @@index([at])
+  @@map("audit")
+}
+
+model MasterValue {
+  id     String  @id
+  type   String
+  value  String
+  from   String?
+  to     String?
+  active Boolean @default(true)
+
+  @@index([type])
+  @@map("master")
+}
+
+model Role {
+  id     String  @id
+  name   String  @unique
+  desc   String?
+  perms  String  @default("{}") // "ALL" or JSON permission map
+  system Boolean @default(false)
+
+  @@map("roles")
+}
+
+model User {
+  id           String  @id
+  name         String
+  email        String?
+  role         String
+  active       Boolean @default(true)
+  username     String? @unique
+  passwordHash String? @map("password_hash")
+  entraOid     String? @map("entra_oid")
+
+  @@map("users")
+}
+
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
