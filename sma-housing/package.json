@@ -5,7 +5,13 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "build": "npm --prefix web run build",
+    "build:web": "npm --prefix web run build",
+    "dev:web": "npm --prefix web run dev",
+    "install:web": "npm --prefix web install",
+    "test": "node test/run.mjs",
+    "test:all": "node test/run.mjs --browser"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -19,5 +25,8 @@
   },
   "engines": {
     "node": ">=22.5"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
   }
 }

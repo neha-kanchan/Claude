@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Manual override wins over the OS preference; index.html stamps data-theme
+   before first paint, so there is no flash and no unstyled state. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Spline Sans Mono', ui-monospace, monospace;
+}
+
+/* Brand palette carried over from the original client so the two frontends
+   read as the same product. Only the tokens change between themes. */
+:root[data-theme="light"] {
+  --pine: #1E4034; --pine-deep: #142E25;
+  --leaf: #2F6B54;  --leaf-soft: #E4EFE9;
+  --paper: #F7F6F1; --card: #FFFFFF;
+  --ink: #22302A;   --ink-soft: #5C6B63; --line: #E3E1D8;
+  --amber: #C98A2B; --amber-soft: #F8EEDC;
+  --brick: #B4482F; --brick-soft: #F7E5E0;
+  --blue: #2D5C8A;  --blue-soft: #E1EBF4;
+  --violet: #5C4A8A;--violet-soft: #EAE6F4;
+  --shadow: 0 1px 2px rgb(30 64 52 / .06), 0 4px 14px rgb(30 64 52 / .07);
+}
+:root[data-theme="dark"] {
+  --pine: #0F1F1A; --pine-deep: #0A1613;
+  --leaf: #6FBF9B;  --leaf-soft: #17352A;
+  --paper: #0F1512; --card: #171E1A;
+  --ink: #E6EDE8;   --ink-soft: #9BAAA1; --line: #2A342E;
+  --amber: #E0A954; --amber-soft: #3A2E18;
+  --brick: #E28067; --brick-soft: #3B211A;
+  --blue: #7FAAD6;  --blue-soft: #17293A;
+  --violet: #A895D8;--violet-soft: #241D3A;
+  --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 4px 14px rgb(0 0 0 / .35);
+}
+
+@layer base {
+  html { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Inputs inherit the theme rather than the OS default control colours. */
+  input, select, textarea, button { font-family: inherit; }
+  :focus-visible { outline: 2px solid var(--leaf); outline-offset: 1px; }
+}
+
+@layer components {
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .field {
+    width: 100%; background: var(--card); color: var(--ink);
+    border: 1px solid var(--line); border-radius: 6px; padding: .5rem .65rem; font-size: .9rem;
+  }
+  .field:focus { outline: 2px solid var(--leaf); outline-offset: 1px; border-color: var(--leaf); }
+  .field[disabled] { opacity: .55; }
+}
+
+/* Tabular figures keep table columns from jittering as values change. */
+.tnum { font-variant-numeric: tabular-nums; }

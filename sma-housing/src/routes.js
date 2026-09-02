@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { COLLECTIONS, listAll, getOne, upsertOne, deleteOne, syncCollection, query, dbKind } from './db2.js';
 import { login, requireAuth, authMode, setPassword, setUsername, mintViewToken, verifyViewToken, viewTokenTtlSeconds } from './auth.js';
 import { canRead, canWrite, COLLECTION_PAGE } from './perms.js';
-import { seedIdentities, wipeEnv } from './seed2.js';
+import { seedIdentities, seedDemoData, wipeEnv } from './seed2.js';
 
 const ENVS = new Set(['prod', 'test']);
 // File bodies are megabytes of base64. They leave the server only through the
@@ -166,6 +166,7 @@ export function buildRouter() {
     if (!req.user.isAdmin) return res.status(403).json({ error: 'Administrator only' });
     await wipeEnv(req.env);
     await seedIdentities(req.env);
+    await seedDemoData(req.env);
     res.json({ ok: true });
   }));
 

@@ -1,3 +1,6 @@
 .env
 node_modules/
 db/*.sqlite*
+web/dist/
+db/test-run.sqlite*
+test/*.png

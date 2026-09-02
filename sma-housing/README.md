@@ -4,26 +4,20 @@ A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (o
 
 ---
 
-## 1. Quick start (2 minutes — nothing to install, nothing to download)
+## 1. Quick start
 
-All dependencies are **already bundled** in this package, and the database engine (SQLite) is **built into Node.js itself** — so there is no `npm install` step and no admin rights needed. Requires **Node.js 24+** (the portable ZIP version works fine).
-
-**Windows:** double-click `start-windows.cmd`, or in a terminal:
-
-```powershell
-cd path\to\sma-housing
-node server.js
-```
-
-**Mac / Linux:**
+Requires **Node.js 22.5+** (24+ recommended). The database engine (SQLite) is built into
+Node itself, so nothing external needs installing for a local run.
 
 ```bash
-cd path/to/sma-housing
+npm install          # server dependencies
 node server.js
 # → SMA Housing System (sqlite) running on http://localhost:3000
 ```
 
-(`npm install` / `npm start` still work too, for developers who prefer them. On Node 22 run `node --experimental-sqlite server.js`.)
+On Node 22 the built-in SQLite is still behind a flag: `node --experimental-sqlite server.js`.
+
+**Windows:** `start-windows.cmd` launches the server once `npm install` has been run.
 
 Open **http://localhost:3000** and sign in:
 
@@ -34,9 +28,31 @@ Open **http://localhost:3000** and sign in:
 | `ghada` | `demo123` | Security Officer (gate + roll call) |
 | `vera` | `demo123` | Viewer (read-only) |
 
-On first sign-in the app creates demo data (students, rooms, cases…) and saves it to the database. Use **Admin → Integration & API → Reset demo data** any time to start over. Change the demo passwords from the Roles & Permissions page before real use.
+A fresh database is seeded on first start: roles, users, and a demo dataset (24 students
+across three buildings, rooms, cases, calendar). Non-Production starts empty so it can be
+filled by a clone from Production. **Admin → Integration & API → Reset demo data** wipes
+and reseeds the current environment. Change the demo passwords from Roles & Users before
+any real use.
 
-With no `DATABASE_URL` set, data is stored in `db/housing.sqlite` — fine for evaluation and small deployments.
+With no `DATABASE_URL` set, data lives in `db/housing.sqlite` — fine for evaluation and
+small deployments.
+
+### The two frontends
+
+| | Served at | Needs a build? |
+|---|---|---|
+| **React client** (`web/`) — React 19, Vite, TanStack Query + Table, Tailwind 4 | `/` once built | yes |
+| **Original client** (`public/`) — one file of vanilla JS, no toolchain | `/legacy`, and `/` when no build exists | no |
+
+```bash
+npm run install:web     # one-time: install the frontend toolchain
+npm run build:web       # emits web/dist; the server then serves it at /
+npm run dev:web         # Vite dev server on :5173, proxying /api to :3000
+```
+
+The server serves `web/dist` when it exists and falls back to `public/` when it does not, so
+a checkout with only the server dependencies installed still runs a complete app. Both
+clients talk to the same REST API and can be used side by side.
 
 ## 2. Connecting PostgreSQL (production)
 
@@ -58,6 +74,8 @@ Works unchanged with any managed Postgres: **Azure Database for PostgreSQL**, AW
 | `AUTH_MODE` | `local` (username/password) or `entra` (Microsoft SSO) | `local` |
 | `ENTRA_TENANT_ID` | Entra directory (tenant) ID | — |
 | `ENTRA_API_AUDIENCE` | Application ID URI / client ID of the API app registration | — |
+| `FILE_VIEW_TTL_MINUTES` | Lifetime of the signed ticket that lets `<img>` read a stored file | `10` |
+| `SQLITE_FILE` | Override the SQLite path (used by the test runner) | `db/housing.sqlite` |
 
 ## 4. Microsoft Entra ID SSO (`AUTH_MODE=entra`)
 
@@ -88,15 +106,35 @@ The same verbs work for `attendance`, `movements` (gate/card-access push), `viol
 
 ```
 POST /api/auth/login                       {username,password} → {token,user}
-GET  /api/bootstrap                        everything the UI needs in one call
-PUT  /api/sync/<collection>                batch upsert+delete (diffed & audited server-side)
-GET  /api/files/<key>/download             stored file body (agreements, evidence…)
+GET  /api/bootstrap                        every collection in one call (files: metadata only)
+PUT  /api/sync/<collection>                whole-collection replace — see the warning below
+GET  /api/files/<key>/download             stored file body, as an attachment (bearer token)
+GET  /api/files/view-token                 short-lived ticket for reading file bodies
+GET  /api/files/<key>/view?t=<ticket>      inline body for <img src>, authorised by the ticket
 GET  /api/admin/backup                     full JSON dump of the current environment
 POST /api/admin/clone-prod-to-test         copy prod → test
-POST /api/admin/reset-demo                 wipe current environment & reseed identities
+POST /api/admin/reset-demo                 wipe current environment & reseed
 POST /api/users/<id>/password              admin sets a user's username/password
 GET  /api/health                           liveness + db/auth mode
 ```
+
+### Writing records
+
+**Write one record at a time.** `PUT /api/sync/<collection>` treats its payload as the
+whole truth for that collection and **deletes every record missing from it**, so two
+clients using it concurrently will erase each other's work. It remains for bulk import and
+for `settings` (a single document), but both frontends now write through
+`POST`/`PUT`/`DELETE` on individual records, and integrations should too.
+
+### File bodies
+
+Bodies never travel with collection data: `/api/bootstrap` and the generic `files` reads
+return metadata only (`id`, `name`, `mime`, `size`). A body is fetched deliberately, through
+`/download` with a bearer token, or through `/view` with a ticket from
+`/api/files/view-token`. The ticket exists because `<img src>` cannot send an
+`Authorization` header; it grants read-only access, expires in minutes, and names the
+environment it may read, so a Non-Production ticket cannot reach Production files.
+Backups still include bodies.
 
 ### Student photos
 
@@ -105,12 +143,13 @@ A student record carries an optional photo. **Add student** and **Edit profile**
 The photo body is kept in the same `files` store as document uploads, and the student row references it by key:
 
 ```
-GET  /api/students/SMA2026001     → { ..., "photoKey": "FILE-3KD9Q" }
-GET  /api/files/FILE-3KD9Q/download   the photo body
-POST /api/students                create/update with "photoKey": "<key>"  (null clears it)
+GET  /api/students/SMA2026001            → { ..., "photoKey": "FILE-3KD9Q" }
+GET  /api/files/FILE-3KD9Q/download      the photo body (bearer token)
+GET  /api/files/FILE-3KD9Q/view?t=…      the same body, for <img src>
+POST /api/students                       create/update with "photoKey": "<key>"  (null clears it)
 ```
 
-Photos appear as a thumbnail in the student list and on the student's 360° record; students without one keep the initials avatar. Replacing or removing a photo deletes the file it replaced, so the store does not accumulate orphans. Every photo change is audited with the profile update.
+Photos are loaded on demand through the view route rather than being sent with the student list, and appear as a thumbnail in the student list and on the student's 360° record; students without one keep the initials avatar. Replacing or removing a photo deletes the file it replaced, so the store does not accumulate orphans. Every photo change is audited with the profile update.
 
 `students.photo_key` is added to existing databases automatically on start-up, so an installation created before this feature keeps its data and gains the column.
 
@@ -133,18 +172,33 @@ Notes:
 ## 8. Project layout
 
 ```
-server.js            Express app: security headers, static frontend, /api router
-src/routes.js        All API routes (auth, bootstrap, sync, REST, files, admin)
-src/auth.js          Local JWT sessions + Entra ID token verification
+server.js            Express app: security headers, static frontends, /api router
+src/routes.js        All API routes (auth, bootstrap, REST, files, admin)
+src/auth.js          Local JWT sessions, Entra ID verification, file view tickets
 src/perms.js         Server-side role/permission checks (page + action level)
 src/db2.js           Database adapter — same code drives PostgreSQL and SQLite
-src/seed2.js         Roles/users identity seed + default permission sets
+src/seed2.js         Identity seed (roles/users) + demo dataset seed
 db/schema.sql        Normalized schema (one table per entity, env column on each)
-public/              Frontend SPA (index.html, app.js, styles.css)
+public/              Original client — index.html, app.js, styles.css, no build step
+web/                 React client
+  src/api/           fetch wrapper + TanStack Query hooks (the whole data layer)
+  src/auth/          session context and the sign-in screen
+  src/components/    UI kit, shared DataTable, BarChart, app shell
+  src/pages/         one file per page (15 pages + the student profile)
+  src/lib/           permissions mirror, formatting, image downscaling
+test/                API and browser suites, plus the runner
 ```
 
-## 9. Verified
+## 9. Tests
 
-The build ships with two test suites that were run against **both** SQLite and PostgreSQL:
-- 31 API assertions: auth, bootstrap, sync diffing, REST CRUD + filters, file download, per-role 403s, env isolation, clone, backup, password rotation, audit.
-- Full browser-flow suite (jsdom): sign-in, first-run seeding, all 15 pages render, UI mutations persist to the database, client actions audited, environment switching.
+```bash
+npm test          # API suites: per-record writes, permissions, files, environments
+npm run test:all  # the above plus a real-browser pass over all 15 pages
+```
+
+`test/run.mjs` boots a server against a scratch SQLite file, runs each suite, and tears it
+down. The browser suites drive Chromium through Playwright (`npm i -D playwright`):
+`browser.test.mjs` covers the React client — sign-in, all 15 pages rendering, a write that
+persists, the audit trail recording it, dark mode, and no sideways scroll at 390px — and
+`legacy.test.mjs` does the same for the original client, including the check that one
+client's save no longer deletes another's records.
