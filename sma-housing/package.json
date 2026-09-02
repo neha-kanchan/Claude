@@ -1,23 +1,14 @@
 {
   "name": "sma-housing-system",
-  "version": "2.0.0",
-  "description": "SMA Student Housing Management System - full-stack: Express REST API, PostgreSQL/SQLite database, Microsoft Entra ID SSO or local JWT auth, role-based permissions, audit trail, prod/non-prod environments.",
-  "type": "module",
+  "version": "3.0.0",
+  "description": "SMA Student Housing Management System - React (Vite) frontend + Express REST API over PostgreSQL.",
+  "private": true,
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "setup": "npm install --prefix backend && npm install --prefix frontend",
+    "dev:api": "npm run dev --prefix backend",
+    "dev:web": "npm run dev --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix backend"
   },
-  "dependencies": {
-    "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "helmet": "^8.0.0",
-    "jose": "^5.9.6",
-    "morgan": "^1.10.0",
-    "pg": "^8.13.1"
-  },
-  "engines": {
-    "node": ">=22.5"
-  }
+  "engines": { "node": ">=22.5" }
 }

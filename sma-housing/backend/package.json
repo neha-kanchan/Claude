@@ -1,0 +1,23 @@
+{
+  "name": "sma-housing-backend",
+  "version": "2.0.0",
+  "description": "SMA Student Housing Management System - Express REST API over PostgreSQL (SQLite for local runs), Microsoft Entra ID SSO or local JWT auth, role-based permissions, audit trail.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "jose": "^5.9.6",
+    "morgan": "^1.10.0",
+    "pg": "^8.13.1"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

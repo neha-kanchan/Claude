@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug backend API",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/server.js",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    }
+  ]
+}

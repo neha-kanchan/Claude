@@ -1,5 +1,6 @@
 @echo off
-REM SMA Housing System - double-click launcher.
+REM SMA Housing System - double-click launcher for the built app.
+REM Runs the Express backend, which also serves the built React frontend.
 REM Uses Node.js from PATH if it is installed, otherwise looks for a portable
 REM Node zip (node-v*-win-x64) unpacked next to this folder, in Downloads or on
 REM the Desktop - the portable build needs no installer and no admin rights.
@@ -31,9 +32,20 @@ if not defined NODE_EXE (
   exit /b 1
 )
 
+if not exist "%~dp0frontend\dist\index.html" (
+  echo The frontend has not been built yet.
+  echo Run these once, from this folder:
+  echo     npm run setup
+  echo     npm run build
+  echo.
+  pause
+  exit /b 1
+)
+
 echo Using Node: %NODE_EXE%
 echo Starting SMA Housing System... keep this window open.
 echo Then open http://localhost:3000 in your browser.
 echo.
+cd backend
 "%NODE_EXE%" server.js
 pause

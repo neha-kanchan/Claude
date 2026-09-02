@@ -1,33 +1,25 @@
 # SMA Housing System — Student Housing Management
 
-A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (or zero-config SQLite) + single-page frontend. Covers the complete requirements set: dashboard KPIs, student 360° profiles, daily roll call, entry/exit with overdue alerts, violations, complaints (incl. maintenance sub-types), requests, documents with stored file bodies, student photos, calendar, notifications, master data with date ranges, role-based page **and** button permissions enforced server-side, full audit trail and JSON backups.
+A full-stack web application in two halves:
 
----
+- **`frontend/`** — React 18 single-page app, built with Vite. Sixteen screens covering dashboard KPIs, student 360° profiles with photos, daily roll call, entry/exit with overdue alerts, violations, complaints and maintenance, requests, documents, calendar, notifications, reports, master data, roles and users, and the audit trail.
+- **`backend/`** — Express REST API over **PostgreSQL** (with SQLite as a zero-config fallback for local runs), Microsoft Entra ID SSO or local JWT auth, role-based permissions enforced server-side, full audit trail and JSON backups.
 
-## 1. Quick start (2 minutes — nothing to install, nothing to download)
+The frontend never touches the database. It talks to the same REST API any other system would use.
 
-All dependencies are **already bundled** in this package, and the database engine (SQLite) is **built into Node.js itself** — so there is no `npm install` step and no admin rights needed. Requires **Node.js 24+** (the portable ZIP version works fine).
+## 1. Running it locally
 
-**No admin rights on your machine?** You do not need to install anything. Download the **Windows Binary (.zip)** from [nodejs.org](https://nodejs.org) (64-bit), extract it into your Downloads or Desktop folder, and double-click `start-windows.cmd` — the launcher finds a `node-v...-win-x64` folder in those locations by itself. On Mac/Linux the equivalent is the `.tar.xz` build: extract it, then run `/path/to/node-v24.x-darwin-arm64/bin/node server.js`.
-
-**Windows:** double-click `start-windows.cmd`, or in a terminal:
-
-```powershell
-cd path\to\sma-housing
-node server.js
-```
-
-**Mac / Linux:**
+You need **Node.js 22.5+** (24+ recommended). No admin rights? Download the **Windows Binary (.zip)** from [nodejs.org](https://nodejs.org), extract it into your Downloads or Desktop folder, and `start-windows.cmd` will find it — the portable build needs no installer.
 
 ```bash
-cd path/to/sma-housing
-node server.js
-# → SMA Housing System (sqlite) running on http://localhost:3000
+npm run setup     # installs backend and frontend dependencies (once)
+npm run build     # builds the React app into frontend/dist
+npm start         # serves API + built frontend on http://localhost:3000
 ```
 
-(`npm install` / `npm start` still work too, for developers who prefer them. On Node 22 run `node --experimental-sqlite server.js`.)
+On Windows you can double-click `start-windows.cmd` instead of `npm start`, once you have run setup and build.
 
-Open **http://localhost:3000** and sign in:
+Sign in with:
 
 | Username | Password | Role |
 |---|---|---|
@@ -36,114 +28,129 @@ Open **http://localhost:3000** and sign in:
 | `ghada` | `demo123` | Security Officer (gate + roll call) |
 | `vera` | `demo123` | Viewer (read-only) |
 
-On first sign-in the app creates demo data (students, rooms, cases…) and saves it to the database. Use **Admin → Integration & API → Reset demo data** any time to start over. Change the demo passwords from the Roles & Permissions page before real use.
+On first sign-in the app creates a demo dataset (students, rooms, cases…) and saves it to the database. **Change these passwords from the Roles & Users page before any real use.**
 
-With no `DATABASE_URL` set, data is stored in `db/housing.sqlite` — fine for evaluation and small deployments.
+## 2. Developing (two servers)
 
-## 2. Connecting PostgreSQL (production)
-
-Set `DATABASE_URL` in `.env` (copy `.env.example`):
-
-```
-DATABASE_URL=postgres://user:password@host:5432/smahousing
+```bash
+npm run dev:api   # terminal 1 — Express on :3000, restarts on save
+npm run dev:web   # terminal 2 — Vite on :5173, hot reload, proxies /api to :3000
 ```
 
-Works unchanged with any managed Postgres: **Azure Database for PostgreSQL**, AWS RDS, Supabase, Neon, Railway… Tables are created automatically at startup (portable SQL, no migration tool needed). For providers that require TLS, append `?sslmode=require`.
+Open **http://localhost:5173** while developing: edits to React files appear instantly without a rebuild. In VS Code, **Terminal → Run Task → Start developing** launches both at once; `.vscode/launch.json` also has a *Debug backend API* configuration for breakpoints in the server.
 
-## 3. Configuration (`.env`)
+## 3. The database
 
-| Variable | Meaning | Default |
+With no `DATABASE_URL` set, the app uses SQLite in `backend/db/housing.sqlite` — fine for evaluation and for local development, and it needs nothing installed.
+
+For anything real, set `DATABASE_URL` and the app switches to PostgreSQL on start-up; tables are created automatically:
+
+```bash
+DATABASE_URL=postgres://user:password@host:5432/sma_housing npm start
+```
+
+Everything else — schema, migrations, the API — is identical on both engines.
+
+## 4. Configuration (`backend/.env`)
+
+Copy `backend/.env.example` to `backend/.env`:
+
+| Variable | Purpose | Default |
 |---|---|---|
-| `PORT` | HTTP port | `3000` |
-| `DATABASE_URL` | Postgres connection string; empty → SQLite file | *(empty)* |
-| `SESSION_SECRET` | HMAC secret for login tokens — **change in production** | dev value |
-| `AUTH_MODE` | `local` (username/password) or `entra` (Microsoft SSO) | `local` |
-| `ENTRA_TENANT_ID` | Entra directory (tenant) ID | — |
-| `ENTRA_API_AUDIENCE` | Application ID URI / client ID of the API app registration | — |
+| `PORT` | HTTP port | 3000 |
+| `DATABASE_URL` | PostgreSQL connection string; empty = SQLite file | empty |
+| `AUTH_MODE` | `local` (username/password) or `entra` (Microsoft SSO) | local |
+| `SESSION_SECRET` | HMAC secret for login tokens — **must be changed in production** | dev value |
+| `SESSION_HOURS` | Session lifetime | 12 |
+| `ENTRA_TENANT_ID` / `ENTRA_CLIENT_ID` / `ENTRA_API_AUDIENCE` | Entra ID app registration, used when `AUTH_MODE=entra` | empty |
 
-## 4. Microsoft Entra ID SSO (`AUTH_MODE=entra`)
+## 5. REST API
 
-The server verifies Microsoft-issued JWTs against your tenant's JWKS (issuer `https://login.microsoftonline.com/<tenant>/v2.0`) — the standard two-app-registration pattern:
-
-1. **API registration** — expose an API scope; its Application ID URI is `ENTRA_API_AUDIENCE`. Define app roles `Housing.Admin`, `Housing.Staff`, `Housing.ReadOnly` and assign users/groups.
-2. **SPA registration** — a public client that acquires tokens for that scope (wire MSAL.js in the frontend, or put the app behind Azure App Service Easy Auth).
-
-Users are auto-provisioned on first sign-in; Entra app roles map to Administrator / Housing Supervisor / Viewer. Local login is disabled in this mode.
-
-## 5. REST API (for integrations)
-
-All endpoints are under `/api`, JSON in/out, authenticated with `Authorization: Bearer <token>` (from `POST /api/auth/login` in local mode, or an Entra token in SSO mode).
+All endpoints are under `/api`, JSON in/out, authenticated with `Authorization: Bearer <token>` from `POST /api/auth/login` (or an Entra token in SSO mode).
 
 ```
 GET    /api/students                 list (any field as query filter, e.g. ?college=Engineering)
-GET    /api/students/SMA2026001      one record
+GET    /api/students/STU-1001        one record
 POST   /api/students                 create (Admissions push)
-PUT    /api/students/SMA2026001      update (merge)
-DELETE /api/students/SMA2026001      delete
+PUT    /api/students/STU-1001        update (merge)
+DELETE /api/students/STU-1001        delete
 ```
 
-The same verbs work for `attendance`, `movements` (gate/card-access push), `violations`, `complaints`, `requests`, `documents`, `calendar`, `master`, … Plus:
+The same verbs work for `attendance`, `movements`, `violations`, `complaints`, `requests`, `documents`, `calendar`, `master`, … Plus:
 
 ```
 POST /api/auth/login                       {username,password} → {token,user}
 GET  /api/bootstrap                        everything the UI needs in one call
 PUT  /api/sync/<collection>                batch upsert+delete (diffed & audited server-side)
-GET  /api/files/<key>/download             stored file body (agreements, evidence…)
+GET  /api/files/<key>/download             stored file body (photos, agreements, evidence)
 GET  /api/admin/backup                     full JSON dump of the database
 POST /api/admin/reset-demo                 wipe the database & reseed identities
 POST /api/users/<id>/password              admin sets a user's username/password
 GET  /api/health                           liveness + db/auth mode
 ```
 
+Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route (a read-only role gets `403` even if it crafts raw requests).
+
 ### Student photos
 
-A student record carries an optional photo. **Add student** and **Edit profile** have a photo field with a live preview; the picture is downscaled in the browser (longest edge 480px, JPEG) before it is stored, so a phone snapshot arrives as ~40–80 KB instead of several megabytes. Images larger than 8 MB and non-image files are rejected at the form.
+Add student and Edit profile carry a photo field with a live preview. The image is downscaled in the browser (longest edge 480px, JPEG) before upload, so a phone snapshot arrives as ~40–80 KB rather than several megabytes; images over 8 MB and non-images are rejected at the form.
 
-The photo body is kept in the same `files` store as document uploads, and the student row references it by key:
+Photo bodies live in the same `files` store as document uploads, and the student row references one by key:
 
 ```
-GET  /api/students/SMA2026001     → { ..., "photoKey": "FILE-3KD9Q" }
+GET  /api/students/STU-1001       → { ..., "photoKey": "FILE-3KD9Q" }
 GET  /api/files/FILE-3KD9Q/download   the photo body
 POST /api/students                create/update with "photoKey": "<key>"  (null clears it)
 ```
 
-Photos appear as a thumbnail in the student list and on the student's 360° record; students without one keep the initials avatar. Replacing or removing a photo deletes the file it replaced, so the store does not accumulate orphans. Every photo change is audited with the profile update.
-
-`students.photo_key` is added to existing databases automatically on start-up, so an installation created before this feature keeps its data and gains the column.
-
-Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route (a read-only role gets `403` even if it crafts raw requests).
+Thumbnails appear in the student list and on the 360° record; students without a photo keep an initials avatar. Replacing or removing a photo deletes the file it replaced, and every photo change is audited with the profile update.
 
 ## 6. Deploying
 
-Any Node host works — Azure App Service, a Linux VM with pm2/systemd, Docker, Render, Railway…
+Build the frontend, then run the backend — one process serves both.
 
 ```bash
-# example: plain VM (dependencies already bundled; npm ci --omit=dev also works)
-SESSION_SECRET=$(openssl rand -hex 32) DATABASE_URL=postgres://... PORT=80 node server.js
+npm run setup && npm run build
+SESSION_SECRET=$(openssl rand -hex 32) DATABASE_URL=postgres://... PORT=8080 npm start
 ```
 
+On a platform-as-a-service (Render, Railway, Azure App Service), set the build command to `npm run setup && npm run build`, the start command to `npm start`, and provide `DATABASE_URL` and `SESSION_SECRET` as environment variables.
+
 Notes:
-- Put TLS in front (App Service/ingress/nginx). The app itself is a single stateless process; scale-out is safe when using Postgres.
-- Backups: use your database's native backup (e.g. Azure automated backups) **plus** the in-app JSON export for portable snapshots.
-- `db/` and `.env` are already git-ignored.
+- **Use PostgreSQL in production.** Most hosts wipe the container disk on restart, which would take the SQLite file with it.
+- Put TLS in front (the host's ingress, or nginx). The app is a single stateless process, so scaling out is safe once you are on Postgres.
+- Backups: your database's own backups **plus** the in-app JSON export for portable snapshots.
+- `backend/db/`, `.env` and `frontend/dist/` are git-ignored.
 
 ## 7. Project layout
 
 ```
-server.js            Express app: security headers, static frontend, /api router
-src/routes.js        All API routes (auth, bootstrap, sync, REST, files, admin)
-src/auth.js          Local JWT sessions + Entra ID token verification
-src/perms.js         Server-side role/permission checks (page + action level)
-src/db2.js           Database adapter — same code drives PostgreSQL and SQLite
-src/seed2.js         Roles/users identity seed + default permission sets
-db/schema.sql        Normalized schema (one table per entity)
-public/              Frontend SPA (index.html, app.js, styles.css)
+package.json          root scripts: setup / build / start / dev:api / dev:web
+.vscode/              VS Code tasks (run both servers) and a debug configuration
+backend/
+  server.js           Express app: security headers, /api router, serves frontend/dist
+  src/routes.js       API routes (auth, bootstrap, sync, REST, files, admin)
+  src/auth.js         Local JWT sessions + Entra ID token verification
+  src/perms.js        Server-side role/permission checks (page + action level)
+  src/db2.js          Database adapter — same code drives PostgreSQL and SQLite
+  src/seed2.js        Roles/users identity seed + default permission sets
+  db/schema.sql       Normalized schema, one table per entity
+frontend/
+  index.html          Vite entry point
+  vite.config.js      Dev server + /api proxy to the backend
+  src/main.jsx        React root
+  src/App.jsx         Routes and per-page permission guards
+  src/lib/            api client, data store, page catalogue, utils, demo seed
+  src/components/     Layout, shared UI, student and document forms
+  src/pages/          One component per screen
 ```
 
 ## 8. Verified
 
-The build ships with two test suites that were run against **both** SQLite and PostgreSQL:
-- 31 API assertions: auth, bootstrap, sync diffing, REST CRUD + filters, file download, per-role 403s, backup, password rotation, audit.
-- Full browser-flow suite (jsdom): sign-in, first-run seeding, all 15 pages render, UI mutations persist to the database, client actions audited.
+Run against **real PostgreSQL 16** with the production build served by Express:
 
-(Both suites predate the removal of the Production / Non-Production split; the assertions that covered environment switching and cloning no longer apply.)
+- Sign-in, first-run seeding, all 15 navigation pages render, and no console errors.
+- Student photo upload → thumbnail in the list → photo on the 360° record → survives a reload (read back from Postgres, stored as a 480px JPEG).
+- Role permissions: a Viewer sees student photos but no Add/Edit buttons and no Roles page.
+- Vite dev server on :5173 proxying `/api` to the backend on :3000.
+- Databases created by earlier versions gain the `photo_key` column on start-up, with existing rows intact (checked on both PostgreSQL and SQLite).
