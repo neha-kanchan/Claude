@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SMA Housing System — Student Housing Management</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<div id="loginScreen">
+  <div class="login-brand">
+    <div class="brand-mark"><span class="dot">⚓</span> SMA Housing System</div>
+    <h1>One place to run SMA student housing — from roll call to reports.</h1>
+    <div class="foot">Attendance &amp; movement · Violations · Complaints &amp; maintenance · Requests · Documents · Audit trail — database-ready and built for API integration.</div>
+  </div>
+  <div class="login-panel">
+    <span class="env-pill" id="loginEnvPill"></span>
+    <div class="login-card">
+      <h2>Sign in</h2>
+      <p class="sub">Sign in with your SMA account.</p>
+      <button class="sso-btn" onclick="ssoLogin()"><svg width="17" height="17" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg> Sign in with Microsoft Entra ID</button>
+      <div class="divider">or sign in locally</div>
+      <div style="display:grid;gap:.8rem">
+        <div><label>Username</label><input id="loginUser" placeholder="e.g. amal" autocomplete="username"></div>
+        <div><label>Password</label><input type="password" id="loginPass" placeholder="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')localLogin()"></div>
+        <button class="btn primary" style="justify-content:center" onclick="localLogin()" id="loginBtn">Sign in</button>
+      </div>
+      <p style="font-size:.75rem;color:var(--ink-soft);margin-top:1rem">Demo accounts — <strong>amal / admin123</strong> (Administrator) · sami / demo123 (Supervisor) · ghada / demo123 (Security) · vera / demo123 (Viewer). Entra ID SSO: set AUTH_MODE=entra in .env (see README).</p>
+    </div>
+  </div>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand-mark"><span class="dot">⚓</span> SMA Housing System</div>
+    <nav id="nav"></nav>
+    <div class="side-env">
+      <strong>Environment</strong>
+      <select id="envSelect" onchange="switchEnv(this.value)">
+        <option value="prod">Production</option>
+        <option value="test">Non-Production</option>
+      </select>
+    </div>
+  </aside>
+  <main>
+    <div class="topbar">
+      <button class="menu-toggle" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+      <div class="search"><span class="ic">🔎</span><input id="globalSearch" placeholder="Search students, rooms, cases… (ID, name, building)" oninput="globalSearch(this.value)"></div>
+      <div class="top-right">
+        <button class="icon-btn" title="Notifications" onclick="go('notifications')">🔔<span class="dot" id="notifDot" style="display:none"></span></button>
+        <div class="userchip"><div class="avatar" id="uAvatar">A</div><div><span id="uName">—</span><small id="uRole">—</small></div></div>
+        <button class="btn small" onclick="logout()">Sign out</button>
+      </div>
+    </div>
+    <div id="content"></div>
+  </main>
+</div>
+
+<div class="modal-back" id="modalBack"><div class="modal" id="modalBox"></div></div>
+<div id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>
