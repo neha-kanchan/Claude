@@ -35,7 +35,6 @@ a{color:var(--leaf)}
 .sso-btn:hover{background:var(--leaf-soft)}
 .divider{display:flex;align-items:center;gap:.7rem;color:var(--ink-soft);font-size:.78rem;margin:1.1rem 0}
 .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
-.env-pill{position:absolute;top:1rem;right:1rem;font-size:.72rem;font-weight:700;padding:.25rem .6rem;border-radius:99px}
 
 /* ---------- App shell ---------- */
 #app{display:none;min-height:100vh}
@@ -48,9 +47,6 @@ nav{flex:1;padding:.4rem .55rem 1rem}
 .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
 .nav-item.active{background:var(--leaf);color:#fff;font-weight:600}
 .nav-item .badge{margin-left:auto;background:var(--amber);color:#fff;font-size:.68rem;font-weight:700;border-radius:99px;padding:.05rem .42rem}
-.side-env{margin:0 .55rem 1rem;padding:.7rem;border-radius:8px;background:rgba(255,255,255,.06);font-size:.78rem}
-.side-env select{margin-top:.35rem;background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2);font-size:.8rem;padding:.35rem .5rem}
-.side-env select option{color:var(--ink)}
 
 main{min-width:0;display:flex;flex-direction:column}
 .topbar{display:flex;align-items:center;gap:1rem;padding:.75rem 1.4rem;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:40}

@@ -1,4 +1,6 @@
 // Database adapter (v2) - PostgreSQL when DATABASE_URL is set, SQLite otherwise.
+// One dataset only. Rows still carry the legacy "env" column so databases written
+// by earlier versions keep working; everything is stored and read as DATASET.
 // Collections map 1:1 to normalized tables whose shapes match the SPA exactly.
 // 'settings' is exposed as an object; 'files' as a { key: fileObj } dictionary.
 
@@ -79,6 +81,8 @@ async function hasColumn(table, column) {
 
 export function query(sql, params) { return driver.query(sql, params); }
 
+export const DATASET = 'prod';
+
 const snake = (s) => s.replace(/[A-Z]/g, (c) => '_' + c.toLowerCase());
 const q = (c) => `"${snake(c)}"`;
 
@@ -135,25 +139,25 @@ function fromRow(spec, row) {
   return out;
 }
 
-export async function listAll(env, collection) {
+export async function listAll(collection) {
   const spec = COLLECTIONS[collection];
-  if (spec.object) return getSettings(env);
-  const { rows } = await query(`select * from "${collection}" where "env" = $1`, [env]);
+  if (spec.object) return getSettings();
+  const { rows } = await query(`select * from "${collection}" where "env" = $1`, [DATASET]);
   const list = rows.map((r) => fromRow(spec, r));
   if (spec.dict) return Object.fromEntries(list.map((f) => [f.id, f]));
   return list;
 }
 
-export async function getOne(env, collection, id) {
+export async function getOne(collection, id) {
   const spec = COLLECTIONS[collection];
-  const { rows } = await query(`select * from "${collection}" where "env" = $1 and "id" = $2`, [env, id]);
+  const { rows } = await query(`select * from "${collection}" where "env" = $1 and "id" = $2`, [DATASET, id]);
   return rows[0] ? fromRow(spec, rows[0]) : null;
 }
 
-export async function upsertOne(env, collection, record, { keepSecrets = false } = {}) {
+export async function upsertOne(collection, record, { keepSecrets = false } = {}) {
   const spec = COLLECTIONS[collection];
   const cols = spec.cols.filter((c) => !(spec.secret || []).includes(c) || keepSecrets || record[c] !== undefined);
-  const existing = await query(`select "id" from "${collection}" where "env" = $1 and "id" = $2`, [env, record.id]);
+  const existing = await query(`select "id" from "${collection}" where "env" = $1 and "id" = $2`, [DATASET, record.id]);
   if (existing.rows.length) {
     const sets = []; const params = []; let i = 1;
     for (const c of cols) {
@@ -161,49 +165,49 @@ export async function upsertOne(env, collection, record, { keepSecrets = false }
       if ((spec.secret || []).includes(c) && record[c] === undefined) continue;
       sets.push(`${q(c)} = $${i++}`); params.push(toRowValue(spec, c, record[c]));
     }
-    params.push(env, record.id);
+    params.push(DATASET, record.id);
     await query(`update "${collection}" set ${sets.join(', ')} where "env" = $${i++} and "id" = $${i}`, params);
     return { created: false };
   }
   const names = ['"env"', ...cols.map(q)];
-  const params = [env, ...cols.map((c) => toRowValue(spec, c, record[c]))];
+  const params = [DATASET, ...cols.map((c) => toRowValue(spec, c, record[c]))];
   await query(`insert into "${collection}" (${names.join(', ')}) values (${names.map((_, i) => `$${i + 1}`).join(', ')})`, params);
   return { created: true };
 }
 
-export async function deleteOne(env, collection, id) {
-  await query(`delete from "${collection}" where "env" = $1 and "id" = $2`, [env, id]);
+export async function deleteOne(collection, id) {
+  await query(`delete from "${collection}" where "env" = $1 and "id" = $2`, [DATASET, id]);
 }
 
-// ---- settings: env-scoped key/value exposed as one object ----
-export async function getSettings(env) {
-  const { rows } = await query('select "key", "value" from "settings" where "env" = $1', [env]);
+// ---- settings: key/value exposed as one object ----
+export async function getSettings() {
+  const { rows } = await query('select "key", "value" from "settings" where "env" = $1', [DATASET]);
   const out = {};
   for (const r of rows) { try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; } }
   return out;
 }
-export async function putSettings(env, obj) {
-  const current = await getSettings(env);
+export async function putSettings(obj) {
+  const current = await getSettings();
   for (const [k, v] of Object.entries(obj || {})) {
     const val = JSON.stringify(v);
-    if (k in current) await query('update "settings" set "value" = $1 where "env" = $2 and "key" = $3', [val, env, k]);
-    else await query('insert into "settings" ("env","key","value") values ($1,$2,$3)', [env, k, val]);
+    if (k in current) await query('update "settings" set "value" = $1 where "env" = $2 and "key" = $3', [val, DATASET, k]);
+    else await query('insert into "settings" ("env","key","value") values ($1,$2,$3)', [DATASET, k, val]);
   }
   for (const k of Object.keys(current)) {
-    if (!(k in (obj || {}))) await query('delete from "settings" where "env" = $1 and "key" = $2', [env, k]);
+    if (!(k in (obj || {}))) await query('delete from "settings" where "env" = $1 and "key" = $2', [DATASET, k]);
   }
 }
 
 // ---- Batch sync from the SPA (diffed; caller audits each change) ----
-export async function syncCollection(env, collection, payload) {
+export async function syncCollection(collection, payload) {
   const spec = COLLECTIONS[collection];
-  if (spec.object) { await putSettings(env, payload); return { updated: ['settings'] , created: [], deleted: [] }; }
+  if (spec.object) { await putSettings(payload); return { updated: ['settings'] , created: [], deleted: [] }; }
 
   let records = payload;
   if (spec.dict) records = Object.entries(payload || {}).map(([id, v]) => ({ ...v, id }));
   if (!Array.isArray(records)) throw new Error('Expected an array');
 
-  const currentRaw = await listAll(env, collection);
+  const currentRaw = await listAll(collection);
   const current = spec.dict ? Object.values(currentRaw) : currentRaw;
   const byId = Object.fromEntries(current.map((r) => [r.id, r]));
   const incomingIds = new Set(records.filter((r) => r && r.id).map((r) => r.id));
@@ -211,13 +215,13 @@ export async function syncCollection(env, collection, payload) {
 
   for (const rec of records) {
     if (!rec || !rec.id) continue;
-    if (!byId[rec.id]) { await upsertOne(env, collection, rec); changes.created.push(rec.id); }
+    if (!byId[rec.id]) { await upsertOne(collection, rec); changes.created.push(rec.id); }
     else if (JSON.stringify(normalize(spec, rec)) !== JSON.stringify(normalize(spec, byId[rec.id]))) {
-      await upsertOne(env, collection, rec); changes.updated.push(rec.id);
+      await upsertOne(collection, rec); changes.updated.push(rec.id);
     }
   }
   for (const id of Object.keys(byId)) {
-    if (!incomingIds.has(id)) { await deleteOne(env, collection, id); changes.deleted.push(id); }
+    if (!incomingIds.has(id)) { await deleteOne(collection, id); changes.deleted.push(id); }
   }
   return changes;
 }
@@ -236,22 +240,22 @@ function normalize(spec, rec) {
   return out;
 }
 
-export async function getUserByUsername(env, username) {
-  const { rows } = await query('select * from "users" where "env" = $1 and "username" = $2 and "active" = 1', [env, username]);
+export async function getUserByUsername(username) {
+  const { rows } = await query('select * from "users" where "env" = $1 and "username" = $2 and "active" = 1', [DATASET, username]);
   if (!rows[0]) return null;
   const r = rows[0];
   return { id: r.id, name: r.name, email: r.email, role: r.role, active: Number(r.active), username: r.username, passwordHash: r.password_hash, entraOid: r.entra_oid };
 }
 
-export async function getRoleByName(env, name) {
-  const { rows } = await query('select * from "roles" where "env" = $1 and "name" = $2', [env, name]);
+export async function getRoleByName(name) {
+  const { rows } = await query('select * from "roles" where "env" = $1 and "name" = $2', [DATASET, name]);
   if (!rows[0]) return null;
   let perms = rows[0].perms;
   if (perms !== 'ALL') { try { perms = JSON.parse(perms); } catch { perms = {}; } }
   return { id: rows[0].id, name: rows[0].name, perms };
 }
 
-export async function countRows(env, collection) {
-  const { rows } = await query(`select count(*) as n from "${collection}" where "env" = $1`, [env]);
+export async function countRows(collection) {
+  const { rows } = await query(`select count(*) as n from "${collection}" where "env" = $1`, [DATASET]);
   return Number(rows[0].n);
 }

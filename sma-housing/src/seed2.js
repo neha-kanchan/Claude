@@ -10,7 +10,7 @@ const PAGE_ACTIONS = {
   violations: ['add','update','close','export'], complaints: ['add','update','comment','export'],
   requests: ['add','approve','reject','export'], documents: ['upload','delete','export'],
   calendar: ['add','delete'], notifications: ['announce'], reports: ['export'],
-  audit: ['export'], master: ['add','edit','delete'], roles: ['add','edit'], integration: ['clone']
+  audit: ['export'], master: ['add','edit','delete'], roles: ['add','edit'], integration: []
 };
 
 function grant(pages, withActions = true) {
@@ -33,9 +33,9 @@ export function defaultPerms(roleName) {
   return {};
 }
 
-export async function seedIdentities(env) {
-  if (await countRows(env, 'users') > 0) return false;
-  const put = (col, rec) => upsertOne(env, col, rec, { keepSecrets: true });
+export async function seedIdentities() {
+  if (await countRows('users') > 0) return false;
+  const put = (col, rec) => upsertOne(col, rec, { keepSecrets: true });
 
   await put('roles', { id: 'ROLE-ADMIN', name: 'Administrator', desc: 'Full access to every page and action.', perms: 'ALL', system: 1 });
   await put('roles', { id: 'ROLE-SUP', name: 'Housing Supervisor', desc: 'Runs daily operations.', perms: JSON.stringify(defaultPerms('Housing Supervisor')), system: 0 });
@@ -48,11 +48,11 @@ export async function seedIdentities(env) {
   await put('users', { id: 'USR-3', name: 'Ghada Gatekeeper', email: 'ghada.sec@sma.ac.ae', role: 'Security Officer', active: 1, username: 'ghada', passwordHash: hash('demo123'), entraOid: '' });
   await put('users', { id: 'USR-4', name: 'Vera Viewer', email: 'vera.view@sma.ac.ae', role: 'Viewer', active: 1, username: 'vera', passwordHash: hash('demo123'), entraOid: '' });
 
-  await put('audit', { id: 'AUD-SEED-' + env, at: new Date().toISOString(), user: 'system', role: '—', action: 'SEED', entity: 'database', entityId: env, details: 'Identity seed (roles + users) for ' + env });
+  await put('audit', { id: 'AUD-SEED', at: new Date().toISOString(), user: 'system', role: '—', action: 'SEED', entity: 'database', entityId: '—', details: 'Identity seed (roles + users)' });
   return true;
 }
 
-export async function wipeEnv(env) {
-  const tables = Object.keys((await import('./db2.js')).COLLECTIONS);
-  for (const t of tables) await query(`delete from "${t}" where "env" = $1`, [env]);
+export async function wipeAll() {
+  const { COLLECTIONS, DATASET } = await import('./db2.js');
+  for (const t of Object.keys(COLLECTIONS)) await query(`delete from "${t}" where "env" = $1`, [DATASET]);
 }

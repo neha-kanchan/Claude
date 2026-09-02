@@ -31,8 +31,7 @@ app.use((err, _req, res, _next) => {
 
 initDb()
   .then(async (driver) => {
-    await seedIdentities('prod');
-    await seedIdentities('test');
+    await seedIdentities();
     app.listen(port, () => console.log(`SMA Housing System (${driver.kind}) running on http://localhost:${port}`));
   })
   .catch((error) => { console.error('Unable to start:', error); process.exit(1); });

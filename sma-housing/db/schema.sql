@@ -1,6 +1,8 @@
 -- SMA Housing System - normalized schema (v2, matches the SPA data shapes 1:1).
 -- Portable SQL: runs unchanged on PostgreSQL and SQLite. All identifiers quoted.
--- Every table carries "env" ('prod' | 'test'). Dates ISO-8601 text; flags integer 0/1.
+-- Every table carries a legacy "env" column, kept so databases written by earlier
+-- versions still load; it now holds one value for every row (see DATASET in db2.js).
+-- Dates ISO-8601 text; flags integer 0/1.
 
 create table if not exists "students" (
   "env" text not null, "id" text not null,

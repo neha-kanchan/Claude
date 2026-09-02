@@ -5,7 +5,6 @@
 ===================================================================== */
 
 /* ---------------- API data layer ---------------- */
-let ENV = localStorage.getItem('sma:env') || 'prod';   // 'prod' | 'test'
 let TOKEN = localStorage.getItem('sma:token') || null;
 const COLLECTIONS = ['students','buildings','rooms','allocations','attendance','movements',
   'violations','complaints','requests','documents','calendar','notifications','audit',
@@ -14,7 +13,7 @@ let DB = {};                          // client cache of the current environment
 let SERVER_META = {};
 
 async function api(path, options={}){
-  const headers = Object.assign({'Content-Type':'application/json','X-Env':ENV}, options.headers||{});
+  const headers = Object.assign({'Content-Type':'application/json'}, options.headers||{});
   if(TOKEN) headers['Authorization'] = 'Bearer '+TOKEN;
   const res = await fetch('/api'+path, Object.assign({}, options, {headers}));
   if(res.status===401 && TOKEN && !path.startsWith('/auth/')){ sessionExpired(); throw new Error('Session expired'); }
@@ -43,7 +42,7 @@ function save(col){
 }
 function saveAll(){ COLLECTIONS.forEach(c=>{ if(c!=='audit') save(c); }); }
 
-async function loadEnv(){
+async function loadData(){
   const r = await api('/bootstrap');
   if(!r.ok) throw new Error('bootstrap failed: '+r.status);
   const data = await r.json();
@@ -197,7 +196,7 @@ function seedData(){
     calendar,notifications:[
       {id:uid('NTF'),at:new Date().toISOString(),type:'rollcall',title:'Daily roll call reminder',body:'Roll call for '+fmtD(today)+' is scheduled at 21:00.',read:false},
       {id:uid('NTF'),at:iso(4),type:'violation',title:'New violation reported',body:'VIO-2002 · Smoking · Building B stairwell.',read:false},
-    ],audit:[{id:uid('AUD'),at:new Date().toISOString(),user:'system',role:'—',action:'SEED',entity:'database',entityId:'—',details:'Demo dataset initialised',env:'prod'}],
+    ],audit:[{id:uid('AUD'),at:new Date().toISOString(),user:'system',role:'—',action:'SEED',entity:'database',entityId:'—',details:'Demo dataset initialised'}],
     master,roles,users,settings:{semester:'Fall 2026',semesterStart:'2025-08-20',semesterEnd:'2026-12-20',rollcallTime:'21:00'},files:{}};
 }
 function masterListFrom(master,type){ return master.filter(m=>m.type===type).map(m=>m.value); }
@@ -219,7 +218,7 @@ const PAGES=[
   {id:'audit',        label:'Audit Trail',    icon:'🧾', sec:'Administration', actions:['export']},
   {id:'master',       label:'Master Data',    icon:'🗂️', sec:'Administration', actions:['add','edit','delete']},
   {id:'roles',        label:'Roles & Users',  icon:'🛡️', sec:'Administration', actions:['add','edit']},
-  {id:'integration',  label:'Integration & API',icon:'🔌', sec:'Administration', actions:['clone']},
+  {id:'integration',  label:'Integration & API',icon:'🔌', sec:'Administration', actions:[]},
 ];
 
 let CURRENT_USER=null, CURRENT_PAGE='dashboard', PAGE_ARG=null;
@@ -252,12 +251,6 @@ function can(page, action){
 /* render an action button only if permitted */
 function abtn(page,action,html){ return can(page,action)? html : ''; }
 
-function populateLogin(){
-  const pill=$('#loginEnvPill');
-  pill.textContent = ENV==='prod'?'PRODUCTION':'NON-PRODUCTION';
-  pill.style.background = ENV==='prod'?'var(--leaf-soft)':'var(--amber-soft)';
-  pill.style.color = ENV==='prod'?'var(--leaf)':'var(--amber)';
-}
 async function localLogin(){
   const username=$('#loginUser').value.trim(), password=$('#loginPass').value;
   if(!username||!password) return toast('Enter username and password');
@@ -277,7 +270,7 @@ function ssoLogin(){
 async function startSession(u,method){
   CURRENT_USER=u;
   try{
-    DB=await loadEnv();
+    DB=await loadData();
     // First run: the server holds only identities; seed demo business data and sync it up.
     if(!DB.students || !DB.students.length){
       const seeded=seedData();
@@ -292,7 +285,7 @@ async function startSession(u,method){
   audit('LOGIN','session',u.id,`Signed in (${method})`);
   $('#loginScreen').style.display='none';
   $('#app').classList.add('on');
-  $('#uName').textContent=u.name; $('#uRole').textContent=u.role+' · '+(ENV==='prod'?'Production':'Non-Prod');
+  $('#uName').textContent=u.name; $('#uRole').textContent=u.role;
   $('#uAvatar').textContent=u.name.split(' ').map(x=>x[0]).slice(0,2).join('');
   buildNav(); updateNotifDot(); dailyChecks();
   go(can('dashboard')?'dashboard':PAGES.find(p=>can(p.id))?.id||'dashboard');
@@ -301,7 +294,6 @@ function logout(){
   audit('LOGOUT','session',CURRENT_USER?CURRENT_USER.id:'—','Signed out');
   CURRENT_USER=null; TOKEN=null; localStorage.removeItem('sma:token');
   $('#app').classList.remove('on'); $('#loginScreen').style.display='flex';
-  populateLogin();
 }
 
 /* ---------------- Navigation / router ---------------- */
@@ -316,7 +308,6 @@ function buildNav(){
     html+=`<button class="nav-item ${p.id===CURRENT_PAGE?'active':''}" onclick="go('${p.id}')">${p.icon} ${p.label} ${badge}</button>`;
   });
   $('#nav').innerHTML=html;
-  $('#envSelect').value=ENV;
 }
 function go(page,arg){
   if(!can(page)) { toast('Your role does not have access to that page.'); return; }
@@ -403,7 +394,7 @@ ROUTES.dashboard=function(){
   $('#content').innerHTML=`
   <div class="page-head"><h1>Housing dashboard</h1>
     <div class="actions"><button class="btn" onclick="printPage()">🖨️ Print</button></div>
-    <p>${esc(DB.settings.semester)} · ${fmtD(today)} · ${ENV==='prod'?'Production':'Non-production'} environment</p></div>
+    <p>${esc(DB.settings.semester)} · ${fmtD(today)}</p></div>
 
   ${overdue.length?`<div class="card" style="border-left:4px solid var(--brick);margin-bottom:1rem">
      <strong style="color:var(--brick)">⏰ ${overdue.length} student${overdue.length>1?'s have':' has'} exceeded the approved return time</strong>
@@ -1404,7 +1395,7 @@ function renderAudit(){
     <td>${esc(a.entity)}</td><td class="mono">${esc(a.entityId)}</td><td style="font-size:.83rem">${esc(a.details)}</td><td style="font-size:.75rem">${a.env}</td></tr>`).join('')}</tbody></table>`
     :'<div class="empty">No audit entries match.</div>';
 }
-function exportAudit(){ exportCSV('audit-trail.csv',DB.audit.map(a=>({at:a.at,user:a.user,role:a.role,action:a.action,entity:a.entity,record:a.entityId,details:a.details,env:a.env}))); }
+function exportAudit(){ exportCSV('audit-trail.csv',DB.audit.map(a=>({at:a.at,user:a.user,role:a.role,action:a.action,entity:a.entity,record:a.entityId,details:a.details}))); }
 
 /* ---------------- Master data ---------------- */
 const MASTER_TYPES=[['college','Colleges / Majors'],['violationType','Violation types'],['complaintCategory','Complaint categories'],
@@ -1568,13 +1559,8 @@ ROUTES.integration=function(){
         </tbody></table></div>
         <p style="font-size:.8rem;color:var(--ink-soft);margin-top:.7rem">Try in the browser console: <span class="mono">HousingAPI.get('students')</span> · <span class="mono">HousingAPI.post('students', {...})</span> · <span class="mono">HousingAPI.put('students','STU-1001',{phone:'050...'})</span></p>
       </div>
-      <div class="card"><h2>Environments</h2>
-        <p style="font-size:.87rem">Two isolated datasets are kept: <strong>Production</strong> and <strong>Non-Production</strong>. Switch with the selector in the sidebar. Production can be cloned down for safe testing.</p>
-        ${abtn('integration','clone',`<button class="btn primary" style="margin-top:.7rem" onclick="cloneProdToTest()">⧉ Clone Production → Non-Production</button>`)}
-        <p style="font-size:.78rem;color:var(--ink-soft);margin-top:.5rem">Cloning overwrites the non-production dataset with a full copy of production. The action is recorded in the audit trail.</p>
-      </div>
       <div class="card"><h2>Backups</h2>
-        <p style="font-size:.87rem">Download a full snapshot of the current environment (all tables, documents metadata and audit log) as JSON — the same shape a server-side backup job would produce.</p>
+        <p style="font-size:.87rem">Download a full snapshot of the database (all tables, documents metadata and audit log) as JSON — the same shape a server-side backup job would produce.</p>
         <button class="btn" style="margin-top:.7rem" onclick="downloadBackup()">⬇ Download backup (JSON)</button>
       </div>
     </div>
@@ -1608,37 +1594,14 @@ users(id PK, name, email, role_id FK, active)
     </div>
   </div>`;
 };
-async function cloneProdToTest(){
-  if(!confirm('Overwrite Non-Production with a full copy of Production?')) return;
-  const r=await api('/admin/clone-prod-to-test',{method:'POST'});
-  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast(d.error||'Clone failed'); }
-  if(ENV==='test'){ DB=await loadEnv(); buildNav(); go('integration'); }
-  toast('Production cloned to Non-Production');
-}
 async function downloadBackup(){
   const r=await api('/admin/backup');
   if(!r.ok){ const d=await r.json().catch(()=>({})); return toast(d.error||'Backup failed (administrator only)'); }
   const blob=await r.blob();
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download=`sma-housing-backup-${ENV}-${todayStr()}.json`; a.click();
+  a.download=`sma-housing-backup-${todayStr()}.json`; a.click();
   toast('Backup downloaded');
-}
-
-/* ---------------- Environment switch ---------------- */
-async function switchEnv(env){
-  ENV=env; localStorage.setItem('sma:env',env);
-  try{ DB=await loadEnv(); }catch(e){ return toast('Could not load '+env+': '+e.message); }
-  if(!DB.students||!DB.students.length){
-    if(env==='test') toast('Non-production is empty — clone production from Integration & API, or start fresh');
-    COLLECTIONS.forEach(c=>{ if(DB[c]==null||(Array.isArray(DB[c])&&!DB[c].length&&(c==='settings'||c==='files'))) DB[c]=(c==='settings'||c==='files')?{}:(DB[c]||[]); });
-  }
-  COLLECTIONS.forEach(c=>{ if(DB[c]==null) DB[c]=(c==='settings'||c==='files')?{}:[]; });
-  DB.roles.forEach(rl=>{ if(rl.perms!=='ALL'&&(!rl.perms||!Object.keys(rl.perms).length)) rl.perms=defaultPerms(rl.name); });
-  audit('ENV','environment',env,'Switched to '+(env==='prod'?'Production':'Non-Production'));
-  $('#uRole').textContent=CURRENT_USER.role+' · '+(ENV==='prod'?'Production':'Non-Prod');
-  buildNav(); updateNotifDot(); go('dashboard');
-  toast('Now working in '+(env==='prod'?'Production':'Non-Production'));
 }
 
 /* ---------------- Global search ---------------- */
@@ -1695,7 +1658,6 @@ function dailyChecks(){
 
 /* ---------------- Boot ---------------- */
 (async function boot(){
-  populateLogin();
   // resume an existing session if the token is still valid
   if(TOKEN){
     try{

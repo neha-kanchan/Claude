@@ -1,6 +1,6 @@
 # SMA Housing System — Student Housing Management
 
-A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (or zero-config SQLite) + single-page frontend. Covers the complete requirements set: dashboard KPIs, student 360° profiles, daily roll call, entry/exit with overdue alerts, violations, complaints (incl. maintenance sub-types), requests, documents with stored file bodies, student photos, calendar, notifications, master data with date ranges, role-based page **and** button permissions enforced server-side, full audit trail, JSON backups, and separate Production / Non-Production environments with one-click cloning.
+A full-stack, hostable web application: Node.js/Express REST API + PostgreSQL (or zero-config SQLite) + single-page frontend. Covers the complete requirements set: dashboard KPIs, student 360° profiles, daily roll call, entry/exit with overdue alerts, violations, complaints (incl. maintenance sub-types), requests, documents with stored file bodies, student photos, calendar, notifications, master data with date ranges, role-based page **and** button permissions enforced server-side, full audit trail and JSON backups.
 
 ---
 
@@ -70,13 +70,9 @@ The server verifies Microsoft-issued JWTs against your tenant's JWKS (issuer `ht
 
 Users are auto-provisioned on first sign-in; Entra app roles map to Administrator / Housing Supervisor / Viewer. Local login is disabled in this mode.
 
-## 5. Environments: Production & Non-Production
+## 5. REST API (for integrations)
 
-Every record carries an environment tag, and the API scopes each request with the `X-Env: prod|test` header — one deployment, two isolated datasets. In the UI, the header dropdown switches environments; **Integration & API → Clone Production → Non-Prod** copies all production data into the test environment for safe experimentation (Administrator only).
-
-## 6. REST API (for integrations)
-
-All endpoints are under `/api`, JSON in/out, authenticated with `Authorization: Bearer <token>` (from `POST /api/auth/login` in local mode, or an Entra token in SSO mode). Add `X-Env: test` to target Non-Production.
+All endpoints are under `/api`, JSON in/out, authenticated with `Authorization: Bearer <token>` (from `POST /api/auth/login` in local mode, or an Entra token in SSO mode).
 
 ```
 GET    /api/students                 list (any field as query filter, e.g. ?college=Engineering)
@@ -93,9 +89,8 @@ POST /api/auth/login                       {username,password} → {token,user}
 GET  /api/bootstrap                        everything the UI needs in one call
 PUT  /api/sync/<collection>                batch upsert+delete (diffed & audited server-side)
 GET  /api/files/<key>/download             stored file body (agreements, evidence…)
-GET  /api/admin/backup                     full JSON dump of the current environment
-POST /api/admin/clone-prod-to-test         copy prod → test
-POST /api/admin/reset-demo                 wipe current environment & reseed identities
+GET  /api/admin/backup                     full JSON dump of the database
+POST /api/admin/reset-demo                 wipe the database & reseed identities
 POST /api/users/<id>/password              admin sets a user's username/password
 GET  /api/health                           liveness + db/auth mode
 ```
@@ -118,7 +113,7 @@ Photos appear as a thumbnail in the student list and on the student's 360° reco
 
 Every write — UI or API — is recorded in the audit log with user, role, action, entity and timestamp. Role permissions are enforced on the server for every route (a read-only role gets `403` even if it crafts raw requests).
 
-## 7. Deploying
+## 6. Deploying
 
 Any Node host works — Azure App Service, a Linux VM with pm2/systemd, Docker, Render, Railway…
 
@@ -132,7 +127,7 @@ Notes:
 - Backups: use your database's native backup (e.g. Azure automated backups) **plus** the in-app JSON export for portable snapshots.
 - `db/` and `.env` are already git-ignored.
 
-## 8. Project layout
+## 7. Project layout
 
 ```
 server.js            Express app: security headers, static frontend, /api router
@@ -141,12 +136,14 @@ src/auth.js          Local JWT sessions + Entra ID token verification
 src/perms.js         Server-side role/permission checks (page + action level)
 src/db2.js           Database adapter — same code drives PostgreSQL and SQLite
 src/seed2.js         Roles/users identity seed + default permission sets
-db/schema.sql        Normalized schema (one table per entity, env column on each)
+db/schema.sql        Normalized schema (one table per entity)
 public/              Frontend SPA (index.html, app.js, styles.css)
 ```
 
-## 9. Verified
+## 8. Verified
 
 The build ships with two test suites that were run against **both** SQLite and PostgreSQL:
-- 31 API assertions: auth, bootstrap, sync diffing, REST CRUD + filters, file download, per-role 403s, env isolation, clone, backup, password rotation, audit.
-- Full browser-flow suite (jsdom): sign-in, first-run seeding, all 15 pages render, UI mutations persist to the database, client actions audited, environment switching.
+- 31 API assertions: auth, bootstrap, sync diffing, REST CRUD + filters, file download, per-role 403s, backup, password rotation, audit.
+- Full browser-flow suite (jsdom): sign-in, first-run seeding, all 15 pages render, UI mutations persist to the database, client actions audited.
+
+(Both suites predate the removal of the Production / Non-Production split; the assertions that covered environment switching and cloning no longer apply.)
