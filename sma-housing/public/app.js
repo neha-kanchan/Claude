@@ -14,34 +14,131 @@ let DB = {};                          // client cache of the current environment
 let SERVER_META = {};
 
 async function api(path, options={}){
-  const headers = Object.assign({'Content-Type':'application/json','X-Env':ENV}, options.headers||{});
+  const headers = Object.assign({'Content-Type':'application/json','X-Env':ENV,'X-Source':'ui'}, options.headers||{});
   if(TOKEN) headers['Authorization'] = 'Bearer '+TOKEN;
   const res = await fetch('/api'+path, Object.assign({}, options, {headers}));
   if(res.status===401 && TOKEN && !path.startsWith('/auth/')){ sessionExpired(); throw new Error('Session expired'); }
   return res;
 }
 function sessionExpired(){
-  TOKEN=null; localStorage.removeItem('sma:token');
+  TOKEN=null; localStorage.removeItem('sma:token'); stopViewTicket();
   $('#app').classList.remove('on'); $('#loginScreen').style.display='flex';
   toast('Session expired — please sign in again.');
 }
 
-/* save(col): debounced batch sync of one collection to the server.
-   The server diffs against the database, writes the changes and audits each one.
-   403 = the current role cannot write that collection server-side; local cache keeps working. */
-const saveTimers = {};
-function save(col){
-  if(col==='audit') return;                       // audit is server-generated
-  if(saveTimers[col]) clearTimeout(saveTimers[col]);
-  saveTimers[col] = setTimeout(async ()=>{
-    try{
-      const r = await api('/sync/'+col, {method:'PUT', body: JSON.stringify(DB[col])});
-      if(r.status===403) console.warn('sync '+col+': not permitted for this role');
-      else if(!r.ok) console.warn('sync '+col+' failed', r.status);
-    }catch(e){ console.warn('sync '+col+' error', e.message); }
-  }, 300);
+/* ---------------- Write path ----------------
+   Records are written one at a time through the REST endpoints
+   (POST /api/<col>, PUT /api/<col>/<id>, DELETE /api/<col>/<id>) — never as a
+   whole-collection replace. BASE holds the last state the server confirmed;
+   save(col) diffs the local cache against BASE and sends only what actually
+   changed, so two people working at once no longer delete each other's records.
+   A record is copied into BASE only once its write succeeds, which means a
+   failed write is retried by the next save instead of being silently lost. */
+
+const DICT_COLLECTIONS = new Set(['files']);          // stored as { id: record }
+let BASE = {};                                        // last server-confirmed state
+
+const clone = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+/* Key-order-insensitive compare, so a record that only differs in property
+   order is not rewritten on every save. */
+const stable = v => JSON.stringify(v, (_k, val) =>
+  (val && typeof val === 'object' && !Array.isArray(val))
+    ? Object.fromEntries(Object.keys(val).sort().map(k => [k, val[k]]))
+    : val);
+
+function asList(col, value){
+  if(DICT_COLLECTIONS.has(col)) return Object.entries(value||{}).map(([id,rec])=>({...rec, id}));
+  return Array.isArray(value) ? value : [];
 }
-function saveAll(){ COLLECTIONS.forEach(c=>{ if(c!=='audit') save(c); }); }
+function snapshot(col){ BASE[col] = clone(DB[col]); }
+function snapshotAll(){ COLLECTIONS.forEach(snapshot); }
+
+function commitOne(col, id, rec){
+  const copy = clone(rec); copy.id = id;
+  if(DICT_COLLECTIONS.has(col)){ BASE[col] = BASE[col]||{}; BASE[col][id] = copy; return; }
+  BASE[col] = Array.isArray(BASE[col]) ? BASE[col] : [];
+  const i = BASE[col].findIndex(r => r && r.id === id);
+  if(i >= 0) BASE[col][i] = copy; else BASE[col].push(copy);
+}
+function commitDelete(col, id){
+  if(DICT_COLLECTIONS.has(col)){ if(BASE[col]) delete BASE[col][id]; return; }
+  if(Array.isArray(BASE[col])) BASE[col] = BASE[col].filter(r => !(r && r.id === id));
+}
+
+const saveTimers = {};
+const saveQueues = {};
+
+/* save(col): debounced, then queued so two flushes of one collection never
+   interleave (BASE must not be mutated by an older write while a newer runs). */
+function save(col){
+  if(col === 'audit') return;                       // audit is server-generated
+  if(saveTimers[col]) clearTimeout(saveTimers[col]);
+  saveTimers[col] = setTimeout(() => { flush(col); }, 300);
+}
+function flush(col){
+  const run = () => pushChanges(col).catch(e => console.warn('sync '+col+' error', e.message));
+  saveQueues[col] = (saveQueues[col] || Promise.resolve()).then(run, run);
+  return saveQueues[col];
+}
+function saveAll(){ return Promise.all(COLLECTIONS.filter(c=>c!=='audit').map(flush)); }
+/* Flush everything still queued — used before sign-out and env switches. */
+function flushPending(){
+  Object.values(saveTimers).forEach(clearTimeout);
+  return saveAll();
+}
+
+async function pushChanges(col){
+  // settings is a single key/value document, not a record set: replace as a whole.
+  if(col === 'settings'){
+    if(stable(DB.settings||{}) === stable(BASE.settings||{})) return;
+    const r = await api('/sync/settings', {method:'PUT', body: JSON.stringify(DB.settings||{})});
+    if(r.ok) snapshot('settings'); else reportWriteFailure(col, [['settings', r.status]]);
+    return;
+  }
+
+  const local = asList(col, DB[col]);
+  const base  = asList(col, BASE[col]);
+  const baseById = new Map(base.map(r => [r.id, r]));
+  const present = new Set();
+  const failed = [];
+
+  for(const rec of local){
+    if(!rec || !rec.id) continue;
+    present.add(rec.id);
+    const prev = baseById.get(rec.id);
+    if(prev && stable(prev) === stable({...rec, id: rec.id})) continue;   // untouched
+    const path = '/'+col+'/'+encodeURIComponent(rec.id);
+    const r = prev
+      ? await api(path, {method:'PUT',  body: JSON.stringify(rec)})
+      : await api('/'+col, {method:'POST', body: JSON.stringify({...rec, id: rec.id})});
+    if(r.ok) commitOne(col, rec.id, rec);
+    else if(r.status === 404 && prev){
+      // Someone else deleted it; recreate rather than losing the edit.
+      const again = await api('/'+col, {method:'POST', body: JSON.stringify({...rec, id: rec.id})});
+      if(again.ok) commitOne(col, rec.id, rec); else failed.push([rec.id, again.status]);
+    }
+    else failed.push([rec.id, r.status]);
+  }
+
+  for(const rec of base){
+    if(present.has(rec.id)) continue;
+    const r = await api('/'+col+'/'+encodeURIComponent(rec.id), {method:'DELETE'});
+    if(r.ok || r.status === 404) commitDelete(col, rec.id);
+    else failed.push([rec.id, r.status]);
+  }
+
+  if(failed.length) reportWriteFailure(col, failed);
+}
+
+/* A write that does not reach the database must not fail silently — the old
+   whole-collection sync only logged, so a 403 looked like a successful save. */
+function reportWriteFailure(col, failed){
+  const forbidden = failed.some(([, status]) => status === 403);
+  console.warn('sync '+col+' failed', failed);
+  toast(forbidden
+    ? 'Not saved — your role cannot change '+col+'.'
+    : 'Could not save '+failed.length+' '+col+' change'+(failed.length>1?'s':'')+' — will retry.');
+}
 
 async function loadEnv(){
   const r = await api('/bootstrap');
@@ -278,6 +375,7 @@ async function startSession(u,method){
   CURRENT_USER=u;
   try{
     DB=await loadEnv();
+    snapshotAll();                      // BASE = what the server actually holds
     // First run: the server holds only identities; seed demo business data and sync it up.
     if(!DB.students || !DB.students.length){
       const seeded=seedData();
@@ -288,6 +386,8 @@ async function startSession(u,method){
     }
     COLLECTIONS.forEach(c=>{ if(DB[c]==null) DB[c]=(c==='settings'||c==='files')?{}:[]; });
     DB.roles.forEach(r=>{ if(r.perms!=='ALL'&&(!r.perms||!Object.keys(r.perms).length)) r.perms=defaultPerms(r.name); });
+    snapshot('roles');                  // normalising perms locally is not an edit to push
+    await refreshViewTicket();          // photos render through short-lived signed URLs
   }catch(e){ toast('Could not load data: '+e.message); return; }
   audit('LOGIN','session',u.id,`Signed in (${method})`);
   $('#loginScreen').style.display='none';
@@ -297,8 +397,10 @@ async function startSession(u,method){
   buildNav(); updateNotifDot(); dailyChecks();
   go(can('dashboard')?'dashboard':PAGES.find(p=>can(p.id))?.id||'dashboard');
 }
-function logout(){
+async function logout(){
   audit('LOGOUT','session',CURRENT_USER?CURRENT_USER.id:'—','Signed out');
+  await flushPending();               // queued writes need the token that is about to go
+  stopViewTicket();
   CURRENT_USER=null; TOKEN=null; localStorage.removeItem('sma:token');
   $('#app').classList.remove('on'); $('#loginScreen').style.display='flex';
   populateLogin();
@@ -358,7 +460,7 @@ const bldg=id=>DB.buildings.find(b=>b.id===id)||{name:id};
 function studentLink(id){ const s=student(id); return `<a class="rowlink" onclick="go('studentDetail','${id}')">${esc(s.name)}</a><br><span class="mono" style="color:var(--ink-soft)">${id}</span>`; }
 const initials=n=>String(n||'').trim().split(/\s+/).map(x=>x[0]||'').slice(0,2).join('').toUpperCase();
 /* Student photo: stored like any other upload in DB.files, referenced by student.photoKey. */
-function studentPhotoUrl(s){ const f=s&&s.photoKey?(DB.files||{})[s.photoKey]:null; return f&&f.data?f.data:null; }
+function studentPhotoUrl(s){ return s&&s.photoKey?fileViewUrl(s.photoKey):null; }
 function studentAvatar(s,cls){
   const url=studentPhotoUrl(s);
   return url?`<span class="avatar ${cls||''} has-photo"><img src="${url}" alt="${esc(s.name||'Student')} photo"></span>`
@@ -519,12 +621,12 @@ async function saveStudent(id){
   const photoNote=photo?' · photo updated':(removePhoto?' · photo removed':'');
   if(id){ const s=student(id); const wasActive=s.status; Object.assign(s,data);
     if(wasActive!=='Inactive'&&data.status==='Inactive'&&s.room){ endAllocation(id,'Deactivated'); s.room=null; s.building=null; }
-    if(photo||removePhoto) setStudentPhoto(s,photo?storeFile(photo):null);
+    if(photo||removePhoto) setStudentPhoto(s,photo?await storeFile(photo):null);
     audit('UPDATE','student',id,'Profile updated'+photoNote);
   } else {
     const nid=$('#sf_id').value.trim()||uid('STU');
     if(DB.students.some(x=>x.id===nid)) return toast('Student ID already exists');
-    DB.students.push({id:nid,...data,building:null,room:null,joined:todayStr(),photoKey:photo?storeFile(photo):null});
+    DB.students.push({id:nid,...data,building:null,room:null,joined:todayStr(),photoKey:photo?await storeFile(photo):null});
     audit('CREATE','student',nid,'Student added'+photoNote);
   }
   save('students'); closeModal(); toast('Student saved');
@@ -787,16 +889,55 @@ function readFileInput(inputEl){
     r.readAsDataURL(f);
   });
 }
-function storeFile(fileObj){
+/* File bodies stay on the server. DB.files holds metadata only; a body is
+   fetched when it is actually shown or downloaded.
+   VIEW_TICKET is a short-lived read-only token that can ride in an <img> URL,
+   which cannot carry an Authorization header. It is refreshed on a timer so
+   fileViewUrl() stays synchronous and usable inside render templates. */
+let VIEW_TICKET=null, viewTicketTimer=null;
+
+async function refreshViewTicket(){
+  try{
+    const r=await api('/files/view-token');
+    if(!r.ok){ VIEW_TICKET=null; return null; }
+    const d=await r.json();
+    VIEW_TICKET=d.token;
+    if(viewTicketTimer) clearTimeout(viewTicketTimer);
+    // renew a little before expiry so a render never picks up a dead ticket
+    viewTicketTimer=setTimeout(refreshViewTicket, Math.max(30, d.expiresIn*0.8)*1000);
+    return VIEW_TICKET;
+  }catch(e){ VIEW_TICKET=null; return null; }
+}
+function stopViewTicket(){ if(viewTicketTimer) clearTimeout(viewTicketTimer); viewTicketTimer=null; VIEW_TICKET=null; }
+
+/* URL for showing a stored file inline (the ticket names the environment). */
+function fileViewUrl(key){
+  if(!key||!VIEW_TICKET) return null;
+  return '/api/files/'+encodeURIComponent(key)+'/view?t='+encodeURIComponent(VIEW_TICKET);
+}
+
+/* Upload a body and return its key. The record is created on the server here,
+   so the local cache only ever holds metadata. */
+async function storeFile(fileObj){
   if(!fileObj||!fileObj.data) return null;
   const key=uid('FILE');
-  DB.files[key]={name:fileObj.name,mime:fileObj.mime,data:fileObj.data,size:fileObj.size};
-  save('files'); return key;
+  const meta={id:key,name:fileObj.name,mime:fileObj.mime,size:fileObj.size};
+  const r=await api('/files',{method:'POST',body:JSON.stringify({...meta,data:fileObj.data})});
+  if(!r.ok){ toast('Could not upload '+(fileObj.name||'file')); return null; }
+  DB.files[key]=meta;
+  commitOne('files',key,meta);   // already on the server - not a pending write
+  return key;
 }
-function downloadFileKey(key,fallbackName){
-  const f=DB.files[key];
-  if(!f||!f.data) return toast('File content not available in this environment');
-  const a=document.createElement('a'); a.href=f.data; a.download=f.name||fallbackName||'document'; a.click();
+
+async function downloadFileKey(key,fallbackName){
+  const meta=(DB.files||{})[key];
+  const r=await api('/files/'+encodeURIComponent(key)+'/download');
+  if(!r.ok) return toast('File content not available in this environment');
+  const blob=await r.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=(meta&&meta.name)||fallbackName||'document'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),10000);
 }
 function fmtSize(b){ if(!b) return '—'; return b>1048576?(b/1048576).toFixed(1)+' MB':Math.round(b/1024)+' KB'; }
 
@@ -912,7 +1053,7 @@ function violationForm(){
 async function saveViolation(){
   const fileObj=await readFileInput($('#vf_file'));
   const id='VIO-'+(2000+DB.violations.length+1);
-  const attachments=[]; if(fileObj){ attachments.push({name:fileObj.name,size:fileObj.size,fileKey:storeFile(fileObj)}); }
+  const attachments=[]; if(fileObj){ attachments.push({name:fileObj.name,size:fileObj.size,fileKey:await storeFile(fileObj)}); }
   const v={id,studentId:$('#vf_s').value,type:$('#vf_t').value,date:$('#vf_d').value,time:$('#vf_tm').value,
     location:$('#vf_l').value.trim(),description:$('#vf_desc').value.trim(),staff:$('#vf_staff').value.trim(),
     action:$('#vf_a').value,status:'Open',attachments,history:[{at:new Date().toISOString(),by:CURRENT_USER.name,note:'Reported'}]};
@@ -1023,7 +1164,7 @@ function complaintForm(){
 async function saveComplaint(){
   const fileObj=await readFileInput($('#cf_file'));
   const id='CMP-'+(3000+DB.complaints.length+1);
-  const attachments=[]; if(fileObj) attachments.push({name:fileObj.name,size:fileObj.size,fileKey:storeFile(fileObj)});
+  const attachments=[]; if(fileObj) attachments.push({name:fileObj.name,size:fileObj.size,fileKey:await storeFile(fileObj)});
   const cat=$('#cf_c').value;
   DB.complaints.push({id,studentId:$('#cf_s').value,category:cat,sub:cat==='Maintenance'?$('#cf_sub').value:'',
     title:$('#cf_title').value.trim()||'(untitled)',description:$('#cf_desc').value.trim(),status:'Submitted',assignee:'',
@@ -1204,7 +1345,7 @@ async function saveDoc(){
   if(!name) return toast('Choose a file or enter a name');
   const id=uid('DOC');
   DB.documents.push({id,studentId:$('#df_s').value,type:$('#df_t').value,name,
-    uploadedAt:new Date().toISOString(),by:CURRENT_USER.name,size:fileObj?fmtSize(fileObj.size):'—',fileKey:fileObj?storeFile(fileObj):null});
+    uploadedAt:new Date().toISOString(),by:CURRENT_USER.name,size:fileObj?fmtSize(fileObj.size):'—',fileKey:fileObj?await storeFile(fileObj):null});
   save('documents'); audit('CREATE','document',id,name);
   closeModal(); toast('Document saved'); go(CURRENT_PAGE,PAGE_ARG);
 }
@@ -1627,14 +1768,17 @@ async function downloadBackup(){
 
 /* ---------------- Environment switch ---------------- */
 async function switchEnv(env){
+  await flushPending();               // land pending writes against the env they were made in
   ENV=env; localStorage.setItem('sma:env',env);
-  try{ DB=await loadEnv(); }catch(e){ return toast('Could not load '+env+': '+e.message); }
+  try{ DB=await loadEnv(); snapshotAll(); }catch(e){ return toast('Could not load '+env+': '+e.message); }
   if(!DB.students||!DB.students.length){
     if(env==='test') toast('Non-production is empty — clone production from Integration & API, or start fresh');
     COLLECTIONS.forEach(c=>{ if(DB[c]==null||(Array.isArray(DB[c])&&!DB[c].length&&(c==='settings'||c==='files'))) DB[c]=(c==='settings'||c==='files')?{}:(DB[c]||[]); });
   }
   COLLECTIONS.forEach(c=>{ if(DB[c]==null) DB[c]=(c==='settings'||c==='files')?{}:[]; });
   DB.roles.forEach(rl=>{ if(rl.perms!=='ALL'&&(!rl.perms||!Object.keys(rl.perms).length)) rl.perms=defaultPerms(rl.name); });
+  snapshot('roles');
+  await refreshViewTicket();          // the old ticket only addressed the previous env
   audit('ENV','environment',env,'Switched to '+(env==='prod'?'Production':'Non-Production'));
   $('#uRole').textContent=CURRENT_USER.role+' · '+(ENV==='prod'?'Production':'Non-Prod');
   buildNav(); updateNotifDot(); go('dashboard');

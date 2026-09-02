@@ -37,6 +37,28 @@ export async function setUsername(env, userId, username) {
   await query('update "users" set "username" = $1 where "env" = $2 and "id" = $3', [String(username).toLowerCase(), env, userId]);
 }
 
+/* Short-lived, read-only ticket for file bodies.
+   <img src> and <a download> cannot send an Authorization header, so the browser
+   gets a signed ticket instead of the session token: it is scoped to one
+   environment, carries no write authority, and expires in minutes. */
+const VIEW_TTL_MINUTES = Number(process.env.FILE_VIEW_TTL_MINUTES || 10);
+
+export async function mintViewToken(env, userId) {
+  return new SignJWT({ uid: userId, env, scope: 'files:read' })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setExpirationTime(`${VIEW_TTL_MINUTES}m`)
+    .sign(SECRET);
+}
+
+export function viewTokenTtlSeconds() { return VIEW_TTL_MINUTES * 60; }
+
+export async function verifyViewToken(token) {
+  const { payload } = await jwtVerify(token, SECRET);
+  if (payload.scope !== 'files:read') throw new Error('Not a file ticket');
+  if (!payload.env) throw new Error('Ticket names no environment');
+  return payload;   // payload.env is the environment the ticket may read
+}
+
 export function requireAuth() {
   return async (req, res, next) => {
     try {
